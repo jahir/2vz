@@ -1,0 +1,160 @@
+#!/usr/bin/perl
+#
+use strict;
+use warnings;
+use Config::Simple;
+use Linux::Inotify2;
+#use Net::INET6Glue::INET_is_INET6;
+use LWP::UserAgent;
+use Time::HiRes qw(gettimeofday);
+use POSIX qw(strftime);
+
+use constant VER => q(0.3.5);
+use constant CONFIG_FILE => q(/etc/vz/vzspool.conf);
+
+use constant {
+	DEFAULT_HTTP_TIMEOUT => 10,
+	DEFAULT_RETRY => 60,
+};
+
+######################
+
+my $LOG;
+sub mylog(@) {
+	my $fmt = shift || '';
+	my @arg = (@_);
+	map { defined $_ ? s/[\r\n]+/ /g : 0E0 } @arg;
+	my ($ts, $tsfrac) = gettimeofday();
+	my $LOGFH;
+	if (defined $LOG) {
+		open $LOGFH, '>>', $LOG or die "open logfile '$LOG': $!\n";
+	} else {
+		$LOGFH = \*STDOUT;
+	}
+	printf $LOGFH "%s.%03d vzspool[%d] $fmt\n", strftime('%Y-%m-%d %H:%M:%S', localtime $ts), $tsfrac/1000, $$, @arg;
+	close $LOGFH if defined $LOG;
+}
+$SIG{__WARN__} = sub { mylog "WARN: %s", join(' ', @_); };
+$SIG{__DIE__}  = sub { mylog "DIE : %s", join(' ', @_); exit 255; };
+$SIG{TERM} = $SIG{QUIT} = $SIG{INT} = sub { mylog "exit (SIG%s)", $_[0]; exit 0; };
+$SIG{HUP} = sub {
+	#local $SIG{HUP} = 'IGNORE';
+	mylog "reload not supported yet";
+};
+
+# config settings
+my ($VZ_SPOOL, $VZ_URL, $HTTP_TIMEOUT, $RETRY);
+{
+	my $cfg = new Config::Simple(CONFIG_FILE) or die Config::Simple->error();
+	$LOG = $cfg->param('logfile') or die "logfile not set\n";
+	$VZ_SPOOL = $cfg->param('spooldir') or die "spooldir not set\n";
+	$VZ_SPOOL .= '/' unless substr($VZ_SPOOL, -1) eq '/';
+	$VZ_URL = $cfg->param('url') or die "url not set\n";
+	$VZ_URL .= '/' unless substr($VZ_URL, -1) eq '/';
+	$HTTP_TIMEOUT = $cfg->param('http_timeout') || DEFAULT_HTTP_TIMEOUT; # http timeout in seconds
+	$RETRY = ($cfg->param('retry') || DEFAULT_RETRY) * 60; # retry time in minutes
+}
+
+######################
+#my $URL = 'http://vz.ymmv.de/middleware.php/data/%s.json?value=%s&ts=%s';
+my $UA = LWP::UserAgent->new(
+	timeout => $HTTP_TIMEOUT,
+	agent => 'vzspool '.VER.' ',
+	keep_alive => 1,
+);
+
+sub move2bad($) {
+	my ($f) = @_;
+	my $old = $VZ_SPOOL.$f;
+	my $new = $VZ_SPOOL.'bad/'.$f;
+	mkdir $VZ_SPOOL.'bad' unless -d $VZ_SPOOL.'bad';
+	link $old, $new 
+		or mylog "move2bad: link %s failed: %s", $f, $!;
+	if (not unlink $old) {
+		mylog "move2bad: unlink %s failed: %s", $f, $!;
+		return;
+	}
+	return 1;
+}
+
+sub post($) {
+	my ($name) = @_;
+	return if substr($name,0,1) eq '.';
+	my $fname = $VZ_SPOOL.$name;
+	if (not -f $fname) {
+		mylog "%s vanished", $name;
+		return;
+	}
+	
+	# 1419679499059_3e3f2e90-c1bf-11e1-862d-4574c4c0f3de_28212.2
+	my ($tsms, $uuid, $val) = ($name =~ /^(\d+)_([0-9a-f-]{36})_(-?[0-9.]+)$/);
+	if (not defined $uuid) {
+		mylog "invalid vzspool file '%.96s'", $name;
+		return;
+	}
+	#my $url = $VZ_URL . 'data/' . $uuid . '.json';
+	#my $response = $UA->post($url, {ts => $tsms, value => $val});
+	my $url = $VZ_URL . "data/$uuid.json?ts=$tsms&value=$val";
+	my $response = $UA->post($url);
+	if ($response->is_success) {
+		if (unlink $fname) {
+			#mylog "ts %s uuid %s val %s : OK", $tsms, $uuid, $val;
+			mylog "%s : OK", $name;
+			return 1;
+		} else {
+			#mylog "ts %s uuid %s val %s : unlink failed (%s)", $tsms, $uuid, $val, $!;
+			mylog "%s : unlink failed (%s)", $name, $!;
+			return;
+		}
+	} else {
+		mylog "%s : POST failed (%s: %s)", $name, $response->status_line, $response->decoded_content;
+		move2bad($name) if $response->code and $response->code == 400;
+		return;
+	}
+}
+
+# seconds to human readable (86477 => 24h1m17s)
+sub sec2hr($) {
+	my ($in) = @_;
+	my $sec = $in % 60; $in = int($in/60);
+	my $min = $in % 60; $in = int($in/60);
+	return sprintf('%dh%dm%ds', $in, $min, $sec);
+}
+
+sub respool() {
+	my $dh;
+	if (not opendir $dh, $VZ_SPOOL) {
+		mylog "ERROR: opendir %s failed: %s", $VZ_SPOOL, $!;
+		return;
+	}
+	my $now = time;
+	while (my $f = readdir $dh) {
+		next if substr($f,0,1) eq '.'; # skip . files
+		my $fn = $VZ_SPOOL . $f;
+		next unless -f $fn;
+		my ($atime, $mtime) = (stat($fn))[8,9]; # last try is stored in atime
+		if ($now-$atime > $RETRY or ($atime == $mtime and $now-$mtime > 10)) {
+			mylog "retry %s (age %s, %s)", $f, sec2hr($now-$mtime), 
+				($atime == $mtime ? 'first try' : 'last tried '.sec2hr($now-$atime).' ago');
+			post($f) or 
+				utime $now, $mtime, $fn;
+		}
+	}
+	closedir $dh;
+}
+######################
+#main
+
+my $inotify = new Linux::Inotify2
+	or die "create inotify object failed: $!\n";
+$inotify->watch($VZ_SPOOL, IN_CLOSE_WRITE, sub { post($_[0]->name) } )
+	or die "inotify watch failed: $!\n";
+
+mylog "vzspool %s startup, watching %s", $VER, $VZ_SPOOL;
+while () {
+	# retry old files
+	respool();
+	# wait for new files
+	$inotify->poll;
+}
+
