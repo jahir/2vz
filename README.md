@@ -30,4 +30,6 @@ Various tools to read and send data to a volkszaehler.org middleware
 	...
 * check logfile 
 	# less /var/log/vz/vz.log
+* (optional) set up logrote. The log may grow quite fast (esp. with S0 input), so daily rotation is reasonable
+	# cp vz.logrotate /etc/logrotate.d/vz
 

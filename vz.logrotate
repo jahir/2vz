@@ -1,0 +1,9 @@
+/var/log/vz/vz.log {
+    missingok
+    notifempty
+    delaycompress
+    #
+    nocreate
+    daily
+    rotate 14
+}
