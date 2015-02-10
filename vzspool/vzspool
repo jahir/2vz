@@ -86,7 +86,7 @@ sub post($) {
 		return;
 	}
 	
-	# 1419679499059_3e3f2e90-c1bf-11e1-862d-4574c4c0f3de_28212.2
+	# 1419679499059_11111111-2222-3333-4444-555555555555_12345.6
 	my ($tsms, $uuid, $val) = ($name =~ /^(\d+)_([0-9a-f-]{36})_(-?[0-9.]+)$/);
 	if (not defined $uuid) {
 		mylog "invalid vzspool file '%.96s'", $name;
