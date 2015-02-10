@@ -11,8 +11,6 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include "timestamps.h"
-
 
 #define NUL 0x00
 #define SOH 0x01

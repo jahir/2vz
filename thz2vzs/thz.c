@@ -13,9 +13,6 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include "timestamps.h"
-
-
 #define NUL 0x00
 #define SOH 0x01
 #define STX 0x02
@@ -80,7 +77,7 @@ struct datadef datadefs[] = {
 	{ 73,	NULL,	1 },
 	{ 75,	NULL,	1 },
 
-	{ -1, NULL, -1, NULL }
+	{ -1, NULL, -1    }
 };
 
 // serial device file descriptor
