@@ -29,6 +29,7 @@
 #define DUMP(pre, buf, len) do { /* nothing */ } while (0)
 #endif
 
+typedef unsigned char BUF;
 
 // serial device file descriptor
 int fd;
@@ -51,7 +52,7 @@ void mylog(char *fmt, ...)
 	
 }
 
-void dump(char * pre, char * buf, ssize_t len)
+void dump(char * pre, BUF * buf, ssize_t len)
 {
 	if (*pre != '\0')
 		printf("%s:", pre);
@@ -60,7 +61,7 @@ void dump(char * pre, char * buf, ssize_t len)
 	printf(" (%zd)\n", len);
 }
 
-int rx(char * buf, size_t bufsize)
+int rx(BUF * buf, size_t bufsize)
 {
 	fd_set rfds;
 	FD_ZERO(&rfds);
@@ -84,7 +85,7 @@ int rx(char * buf, size_t bufsize)
 	return -1;
 }
 
-int rxx(char * buf, size_t bufsize, int want)
+int rxx(BUF * buf, size_t bufsize, int want)
 {
 	size_t got = 0;
 	while (got < want) {
@@ -99,7 +100,7 @@ int rxx(char * buf, size_t bufsize, int want)
 
 int ack()
 {
-	char buf[] = { DLE, STX };
+	BUF buf[] = { DLE, STX };
 	write(fd, buf, 2);
 	int rc = rx(buf, 1);
 	if (rc > 0 && buf[0] == DLE) {
@@ -113,7 +114,7 @@ int ack()
 
 int ping()
 {
-	char c;
+	BUF c;
 	for (int i=5; i>0; --i) {
 		c = STX;
 		write(fd, &c, 1);
@@ -129,7 +130,7 @@ int ping()
 }
 
 
-int checksum(char * buf, size_t len)
+int checksum(BUF * buf, size_t len)
 {
 	unsigned char sum = 1;
 	for(size_t i=0; i<len; ++i) {
@@ -138,10 +139,10 @@ int checksum(char * buf, size_t len)
 	return sum;
 }
 
-int req(int cmd, char * outbuf, size_t bufsize)
+int req(int cmd, BUF * outbuf, size_t bufsize)
 {
 	int got;
-	char buf[1024];
+	BUF buf[1024];
 
 	buf[0] = SOH;
 	buf[1] = NUL;
@@ -162,8 +163,8 @@ int req(int cmd, char * outbuf, size_t bufsize)
 		}
 	}
 
-	char * pos = buf;
-	char * endpos = buf + sizeof(buf);
+	BUF * pos = buf;
+	BUF * endpos = buf + sizeof(buf);
 	int escape = 0;
 	int skip = 0;
 	while (pos < endpos) {
@@ -196,12 +197,13 @@ int req(int cmd, char * outbuf, size_t bufsize)
 			}
 		}
 	}
+	size_t len = pos-buf;
+	DUMP("rx", buf, len);
 	ack();
 	if (pos >= endpos) {
 		EPRINT("message too long (>%u)", sizeof(buf));
 		return -1;
 	}
-	size_t len = pos-buf;
 
 	char * err = NULL;
 	if (len < 6)
@@ -224,7 +226,7 @@ int req(int cmd, char * outbuf, size_t bufsize)
 	return datalen;
 }
 
-double fp(char * buf, int decimals)
+double fp(BUF * buf, int decimals)
 {
 	double f = (signed short) ((*buf) * 256 + *(buf+1));
 	if (decimals == 1)
@@ -234,14 +236,14 @@ double fp(char * buf, int decimals)
 	return f;
 }
 
-char * rawval(char * s)
+char * rawval(BUF * s)
 {
 	static char buf[64];
 	snprintf(buf, sizeof(buf), "%02hhx %02hhx", s[0], s[1]);
 	return buf;
 }
 
-void parse_ts(char * buf, char * raw)
+void parse_ts(char * buf, BUF * raw)
 {
 	int time_val = raw[0] + (raw[1] << 8);
 	int date_val = raw[2] + (raw[3] << 8);
@@ -268,7 +270,7 @@ int main(int argc, char * argv[])
 	}
 
 	struct termios oldtio, newtio;
-	char buf[1024];
+	BUF buf[1024];
 	
 	tcgetattr(fd, &oldtio); /* save current serial port settings */
 	memset(&newtio, 0, sizeof(newtio)); /* clear struct for new port settings */
@@ -307,7 +309,7 @@ int main(int argc, char * argv[])
 			mylog ("%d errors", err_cnt);
 			for (int i=0; i<err_cnt; ++i) {
 				char err_ts[16];
-				char * p = buf+2+i*6;
+				BUF * p = buf+2+i*6;
 				int err_code = p[0];
 				parse_ts(err_ts, p+2);
 				mylog("error %2d: %s code %02d", i+1, err_ts, err_code);

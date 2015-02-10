@@ -360,12 +360,13 @@ int req(int cmd, BUF * outbuf, size_t bufsize)
 			}
 		}
 	}
+	size_t len = pos-buf;
+	DUMP("rx", buf, len);
 	ack();
 	if (pos >= endpos) {
-		EPRINT("message too long (>%u)", sizeof(buf));
+		EPRINT("message too long (%u>%u)", len, sizeof(buf));
 		return -1;
 	}
-	size_t len = pos-buf;
 
 	char * err = NULL;
 	if (len < 6)
