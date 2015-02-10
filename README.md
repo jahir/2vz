@@ -14,22 +14,35 @@ Various tools to read and send data to a volkszaehler.org middleware
 ## Installation
 
 * create an unprivileged user "vz"
-	# useradd -d /var/spool/vz -r vz
+
+	\# useradd -d /var/spool/vz -r vz
+
 * create the log and spool directories
-	# mkdir -p /var/log/vz /var/spool/vz
-	# chown vz: /var/log/vz /var/spool/vz
+
+	\# mkdir -p /var/log/vz /var/spool/vz
+	\# chown vz: /var/log/vz /var/spool/vz
+
 * customize configuration
-	# mkdir /etc/vz
-	# cp vzspool/vzspool.conf /etc/vz
-	# vi /etc/vz/vzspool.conf
+
+	\# mkdir /etc/vz
+	\# cp vzspool/vzspool.conf /etc/vz
+	\# vi /etc/vz/vzspool.conf
+
 * install as daemons. I provided service files for systemd (I use Fedora and that's just how you do it there), but SysV init scripts should not be too hard to create, though.
-	# cp vzspool/vzspool.service /etc/systemd/system/
+
+	\# cp vzspool/vzspool.service /etc/systemd/system/
+
 * start the services you want
-	# systemctl start vzspool
-	# systemctl start d0vz
-	...
+
+	\# systemctl start vzspool
+	\# systemctl start d0vz
+	\# ...
+
 * check logfile 
-	# less /var/log/vz/vz.log
+
+	\# less /var/log/vz/vz.log
+
 * (optional) set up logrote. The log may grow quite fast (esp. with S0 input), so daily rotation is reasonable
-	# cp vz.logrotate /etc/logrotate.d/vz
+
+	\# cp vz.logrotate /etc/logrotate.d/vz
 
