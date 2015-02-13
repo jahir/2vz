@@ -17,6 +17,6 @@
 
 
 
-void mylog(char *fmt, ...);
+void mylog(char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
 void mylog_logpath(char *);
 

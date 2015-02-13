@@ -7,6 +7,7 @@
 #define ACK 0x06
 #define DLE 0x10
 
+#define REQ_HIST 0x09
 #define REQ_GLOBAL   0xfb
 #define REQ_TIMEDATE 0xfc
 #define REQ_FIRMWARE 0xfd

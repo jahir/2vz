@@ -93,12 +93,12 @@ void mylog(char *fmt, ...)
 	vsnprintf(logbuf, sizeof(logbuf),fmt, ap);
 	va_end(ap);
 
-	FILE* fh = fopen(conf.log, "a");
+	FILE* fh = conf.log ? fopen(conf.log, "a") : stderr;
 	if (fh) {	
 		fprintf(fh, "%s.%03u %s[%d] %s\n", timebuf, (unsigned)(tv.tv_usec/1000), PROG, getpid(), logbuf);
 		fclose(fh);
 	} else {
-		perror("mylog");
+		perror("mylog fopen");
 	}	
 }
 
@@ -182,10 +182,10 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 				free(def);
 			}
 		} else {
-			mylog("line %d invalid: '%.99s'", lines, line);
+			mylog("config line %d invalid: '%.99s'", lines, line);
 		}
 	}
-	mylog("config has %d value definitions (%d will be posted)", defs, pdefs);
+	//mylog("config has %d value definitions (%d will be posted)", defs, pdefs);
 	fclose(fh);
 	return conf;
 }
