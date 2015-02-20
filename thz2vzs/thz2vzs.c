@@ -84,7 +84,7 @@ const char * CONF_SEP = " \r\n";
 struct config_t * read_config(char * conffile, struct config_t * conf) {
 	// set default values
 	memset(conf, 0, sizeof(*conf));
-	conf.read_interval = 60;
+	conf->read_interval = 60;
 
 	FILE * fh = fopen(conffile, "r");
 	if (!fh) {

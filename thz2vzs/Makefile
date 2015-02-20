@@ -2,16 +2,16 @@ CFLAGS = -O2 -g -Wall -Werror -std=gnu99
 
 OBJ = log.o thz_com.o
 
-all: thz thz-errors thz2vzs set_time
+all: thz thz_errors thz_time thz2vzs 
 
 thz: thz.o $(OBJ)
 	#$(CC) $(CFLAGS) -o $@ $<
 	$(CC) $(CFLAGS) -o $@ $^
 
-thz_errors: thz-errors.c $(OBJ)
+thz_errors: thz_errors.c $(OBJ)
 	gcc $(CFLAGS) -o $@ $^
 
-thz_time: set_time.c $(OBJ)
+thz_time: thz_time.c $(OBJ)
 	gcc $(CFLAGS) -o $@ $^
 
 thz2vzs: thz2vzs.c $(OBJ)
