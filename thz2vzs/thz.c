@@ -1,8 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "log.h"
-#include "thz-serial.h"
+#include "thz_com.h"
+
+#define PROG "thz"
 
 struct datadef {
 	int pos;
@@ -168,9 +171,14 @@ int main(int argc, char * argv[])
 	if (req(REQ_FIRMWARE, buf, sizeof(buf)) >= 2)
 		mylog("version: %.2f", fp(buf, 2));
 
+	int maxDescLen = 0;
+	for (const struct datadef * dd=datadefs; dd->pos >= 0; ++dd) {
+		if (dd->name && strlen(dd->name) > maxDescLen)
+			maxDescLen = strlen(dd->name);
+	} 
 	do {
 		int got;
-#if 0
+#if 1
 		got = req(REQ_GLOBAL, buf, sizeof(buf));
 		if (got < 0) {
 			mylog("bad data (%d)", got);
@@ -186,9 +194,9 @@ int main(int argc, char * argv[])
 				if (dd->len < -3)
 					++fhempos;
 				if (dd->len > 0)
-					mylog("Offset %2d   %3d (%s): %.*f (%s)", dd->pos, fhempos, dd->name?dd->name:"", dd->digits, val, rawval(buf, dd));
+					mylog("Offset %2d   %3d (%-*s): %6.*f (%s)", dd->pos, fhempos, maxDescLen, dd->name?dd->name:"", dd->digits, val, rawval(buf, dd));
 				else
-					mylog("Offset %2d.%d %3d (%s): %.*f (%s)", dd->pos, -dd->len, fhempos, dd->name?dd->name:"", dd->digits, val, rawval(buf, dd));
+					mylog("Offset %2d.%d %3d (%-*s): %6.*f (%s)", dd->pos, -dd->len, fhempos, maxDescLen, dd->name?dd->name:"", dd->digits, val, rawval(buf, dd));
 			}
 		}
 #endif

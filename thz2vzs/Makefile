@@ -1,33 +1,32 @@
 CFLAGS = -O2 -g -Wall -Werror -std=gnu99
 
-OBJ = log.o thz-serial.o
+OBJ = log.o thz_com.o
 
-all: thz thz-errors thz2vzs
+all: thz thz-errors thz2vzs set_time
 
 thz: thz.o $(OBJ)
 	#$(CC) $(CFLAGS) -o $@ $<
 	$(CC) $(CFLAGS) -o $@ $^
 
-thz-errors: thz-errors.c thz-serial.o log.o
-	gcc -o $@ $(CFLAGS) $<
+thz_errors: thz-errors.c $(OBJ)
+	gcc $(CFLAGS) -o $@ $^
 
-thz2vzs: thz2vzs.c
+thz_time: set_time.c $(OBJ)
+	gcc $(CFLAGS) -o $@ $^
+
+thz2vzs: thz2vzs.c $(OBJ)
 	date +'#define SOURCE_TS "%F %T"' -d @$$(stat -L -c %Y $<) > thz2vzs_ts.h
 	date +'#define COMPILE_TS "%F %T"' >> thz2vzs_ts.h
-	gcc -o $@ $(CFLAGS) $<
+	gcc $(CFLAGS) -o $@ $^
 
-prog: $(OBJ)
-	$(CC) $(CFLAGS) -o prog $(OBJ) $(LDFLAGS)
-
-
-%.o: %.c
+%.o: %.c %.h
 	$(CC) $(CFLAGS) -c $<
 #	gcc -o $@ $(CFLAGS) $<
 
 .PHONY: clean install
 
 clean:
-	rm thz thz2vz thz-errors
+	rm -f -- thz thz-errors set_time thz2vzs *.o
 
 install: /usr/local/bin/thz2vzs
 

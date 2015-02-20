@@ -1,52 +1,31 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <signal.h>
+#include <math.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <termios.h>
 #include <unistd.h>
-#include <errno.h>
-#include <string.h>
-#include <sys/select.h>
-#include <stdarg.h>
-#include <time.h>
 #include <sys/time.h>
-#include <signal.h>
-#include <math.h>
+#include "log.h"
+#include "thz_com.h"
 
 #include "thz2vzs_ts.h"
 
 #define PROG "thz2vzs"
-#define VER "0.3.0"
+#define VER "0.4.0"
 // /path/to/spool/timestamp_uuid_value
 #define VZ_SPOOLFMT "%s%llu_%s_%g"
 
-#define READ_INTERVAL 10
-
-#define NUL 0x00
-#define SOH 0x01
-#define STX 0x02
-#define ETX 0x03
-#define ACK 0x06
-#define DLE 0x10
-
-#define EPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
-
 #if 0
-#define DPRINT(format, args...) printf("%s: "format"\n", __FUNCTION__, ##args)
-//#define DPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
-#else
-#define DPRINT(format, args...) do { /* nothing */ } while (0)
-#endif
-
-#if 0
+#define DPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
 #define DUMP(pre, buf, len) dump(pre, buf, len)
 #else
+#define DPRINT(format, args...) do { /* nothing */ } while (0)
 #define DUMP(pre, buf, len) do { /* nothing */ } while (0)
 #endif
-
-typedef unsigned char BUF;
-
 
 struct datadef {
 	int pos;
@@ -67,40 +46,16 @@ struct config_t {
 	char * log;
 	char * spool;
 	char * port;
+	unsigned long long read_interval;
+	unsigned long long min_post_interval;
 	struct datadef * def;
 };
 
 // config is global
 static struct config_t conf;
 
-// serial device file descriptor
-int com_fd = -1;
-
 char * proctitle;
 size_t proctitle_size;
-
-void mylog(char *fmt, ...)
-{
-	va_list ap;
-	struct timeval tv;
-	char timebuf[32];
-	char logbuf[256];
-
-	gettimeofday(&tv, NULL);
-	strftime(timebuf, sizeof(timebuf), "%F %T", localtime(&tv.tv_sec)); // 2012-10-01 18:13:45.678
-
-	va_start(ap, fmt);
-	vsnprintf(logbuf, sizeof(logbuf),fmt, ap);
-	va_end(ap);
-
-	FILE* fh = conf.log ? fopen(conf.log, "a") : stderr;
-	if (fh) {	
-		fprintf(fh, "%s.%03u %s[%d] %s\n", timebuf, (unsigned)(tv.tv_usec/1000), PROG, getpid(), logbuf);
-		fclose(fh);
-	} else {
-		perror("mylog fopen");
-	}	
-}
 
 void handle_sig(int signum) {
 	if (signum == SIGHUP) {
@@ -127,7 +82,10 @@ const char * CONF_SEP = " \r\n";
 #define CONFIG_ELEM(c,dest) ((c=strtok(NULL,CONF_SEP)) && (dest=strdup(c)))
 #define CONFIG_ELEM_PTR(c,dest) ((c=dest=strtok(NULL,CONF_SEP)))
 struct config_t * read_config(char * conffile, struct config_t * conf) {
+	// set default values
 	memset(conf, 0, sizeof(*conf));
+	conf.read_interval = 60;
+
 	FILE * fh = fopen(conffile, "r");
 	if (!fh) {
 		mylog("open config '%s' failed: %s", conffile, strerror(errno));
@@ -158,6 +116,20 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 				DPRINT("line %d: port '%s'", lines, conf->port);
 			else
 				mylog("config error in line %d (port)", lines);
+		} else if (!strcmp(c, "read_interval")) {
+			char * s, *endptr;
+			if (CONFIG_ELEM_PTR(c, s) && (conf->read_interval=strtoll(s, &endptr, 10)*1e6) > 0 && *endptr == 0) {
+				DPRINT("line %d: read_interval %llu us", lines, conf->read_interval);
+			} else {
+				mylog("config error in line %d (port)", lines);
+			}
+		} else if (!strcmp(c, "min_post_interval")) {
+			char * s, *endptr;
+			if (CONFIG_ELEM_PTR(c, s) && (conf->min_post_interval=strtoll(s, &endptr, 10)*1e3) > 0 && *endptr == 0) {
+				DPRINT("line %d: min_post_interval %llu ms", lines, conf->min_post_interval);
+			} else {
+				mylog("config error in line %d (port)", lines);
+			}
 		} else if (!strcmp(c, "def")) {
 			struct datadef * def = myalloc(sizeof(struct datadef));
 			char * pos, *dec, *trig;
@@ -191,222 +163,14 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 }
 
 /*********************************************************************************/
-void reopen_com() {
-	if (com_fd >= 0) {
-		mylog("device already open, closing");
-		close(com_fd);
-		sleep(1);
-	}
-	while (1) {
-		mylog("opening %s", conf.port);
-		com_fd = open(conf.port, O_RDWR|O_NONBLOCK|O_NOCTTY); // |O_CLOEXEC);
-		if (com_fd >= 0)
-			break;
-		mylog("could not open %s (retry in 10s): %s (%d)", conf.port, strerror(errno), errno);
-		sleep(10);
-	}
-
-	struct termios newtio;
-	memset(&newtio, 0, sizeof(newtio)); /* clear struct for new port settings */
-	cfmakeraw(&newtio);
-	cfsetspeed(&newtio, B115200);
-	tcflush(com_fd, TCIFLUSH);
-	tcsetattr(com_fd, TCSANOW, &newtio);
-
-	mylog("opened %s", conf.port);
-}
-
-void dump(char * pre, BUF * buf, ssize_t len)
-{
-	if (*pre != '\0')
-		printf("%s:", pre);
-	for(int i=0; i<len; ++i)
-		printf(" %02hhx", buf[i]);
-	printf(" (%zd)\n", len);
-}
-
-int rx(BUF * buf, size_t bufsize)
-{
-	fd_set rfds;
-	FD_ZERO(&rfds);
-	FD_SET(com_fd, &rfds);
-	struct timeval tv = { 2, 0 };
-	int retval = select(com_fd+1, &rfds, NULL, NULL, &tv);
-
-	if (retval == -1) {
-	       perror("select()");
-	} else if (retval) {
-		int got = read(com_fd, buf, bufsize);
-		if (got < 0) {
-			perror("read");
-		} else {
-			return got;
-		}
-	} else {
-		EPRINT("rx: timeout");
-	}
-
-	return -1;
-}
-
-int rxx(BUF * buf, size_t bufsize, int want)
-{
-	size_t got = 0;
-	while (got < want) {
-		ssize_t rc = rx(buf+got, bufsize-got);
-		if (rc < 0)
-			return -1;
-		else
-			got += rc;
-	}
-	return got;
-}
-
-int ack()
-{
-	BUF buf[] = { DLE, STX };
-	write(com_fd, buf, 2);
-	int rc = rx(buf, 1);
-	if (rc > 0 && buf[0] == DLE) {
-		DPRINT("ack ok");
-		return 1;
-	} else {
-		EPRINT("ack failed");
-		return 0;
-	}
-}
-
-int ping()
-{
-	BUF buf;
-	for (int i=5; i>0; --i) {
-		buf = STX;
-		write(com_fd, &buf, 1);
-		DPRINT("tx: STX");
-		
-		int got = rx(&buf, sizeof(buf));
-		if (got > 0) {
-			DUMP("rx", &buf, got);
-			return 1;
-		}
-	}
-	return 0;
-}
-
-BUF checksum(BUF * buf, size_t len)
-{
-	BUF sum = 1;
-	for(size_t i=0; i<len; ++i) {
-		sum += buf[i];
-	}
-	return sum;
-}
-
-int req(int cmd, BUF * outbuf, size_t bufsize)
-{
-	int got;
-	BUF buf[1024];
-
-	buf[0] = SOH;
-	buf[1] = NUL;
-	buf[3] = cmd;
-	buf[4] = DLE;
-	buf[5] = ETX;
-	buf[2] = checksum(buf+3, 1);
-	DUMP("tx", buf, 6);
-	write(com_fd, buf, 6);
-	
-	got = rxx(buf, sizeof(buf), 2);
-	if (got > 0) {
-		DUMP("rx", buf, got);
-		if (buf[0] == DLE && buf[1] == STX) {
-			buf[0] = DLE;
-			write(com_fd, buf, 1);
-			DPRINT("tx: DLE");
-		}
-	}
-
-	BUF * pos = buf;
-	BUF * endpos = buf + sizeof(buf);
-	int escape = 0;
-	int skip = 0;
-	while (pos < endpos) {
-		got = rx(pos, 1);
-		if (got < 0) {
-			DUMP("rx", buf, pos-buf);
-			return -1;
-		} else if (got > 0) {
-			if (escape) {
-				if (*pos == DLE) {
-					escape = 0; // skip escaped DLE
-				} else if (*pos == ETX) {
-					++pos;
-					break; // end of transmission
-				} else {
-					EPRINT("bad escaped character %02hhx", *pos);
-					dump("rx", buf, pos-buf);
-					return -1;
-				}
-			} else if (skip) {
-				if (*pos != 0x18)
-					EPRINT("bad character after 0x2b: %02hx", *pos);
-				skip = 0;
-			} else { // not in escape state
-				if (*pos == DLE)
-					escape = 1;
-				else if (*pos == 0x2b)
-					skip = 1;
-				++pos;
-			}
-		}
-	}
-	size_t len = pos-buf;
-	DUMP("rx", buf, len);
-	ack();
-	if (pos >= endpos) {
-		EPRINT("message too long (%u>%u)", len, sizeof(buf));
-		return -1;
-	}
-
-	char * err = NULL;
-	if (len < 6)
-		err = "message too short";
-	else if (buf[0] != SOH || buf[1] != NUL)
-		err = "invalid header";
-	else if (*(pos-2) != DLE || *(pos-1) != ETX)
-		err = "missing terminator";
-	else if (buf[2] != checksum(buf+3, len-5))
-		err = "checksum error";
-
-	if (err != NULL) {
-		dump("rx", buf, len);
-		EPRINT("req error: %s", err);
-		return -1;
-	}	
-
-	size_t datalen = pos - buf - 6;
-	memcpy(outbuf, buf+4, datalen);
-	return datalen;
-}
-
-double fp(BUF * buf, int decimals)
-{
-	signed short val = buf[0];
-	val <<= 8;
-	val += buf[1];
-	double f = val;
-	if (decimals == 1)
-		f /= 10;
-	else if (decimals == 2)
-		f /= 100;
-	DPRINT("%02hhx %02hhx => %hd => %f", buf[0], buf[1], val, f);
-	return f;
-}
-
 
 void vzspool(unsigned long long ts, char * uuid, double val) {
 	char spoolfile[256];
-	snprintf(spoolfile, sizeof(spoolfile), VZ_SPOOLFMT, conf.spool, ts, uuid, val);
+	if (!conf.spool) {
+		mylog("warning: vzspool without spool path, check config");
+		return;
+	}
+	snprintf(spoolfile, sizeof(spoolfile), VZ_SPOOLFMT, conf.spool, ts, uuid, val); // TODO: check length 
 	int fd = open(spoolfile, O_CREAT|O_EXCL|O_WRONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 	if (fd < 0) {
 		mylog("ERROR: open %s: %s", spoolfile, strerror(errno));
@@ -440,10 +204,17 @@ int main(int argc, char * argv[])
 	if (!read_config(argv[1], &conf)) {
 		exit(EXIT_FAILURE);
 	}
+	if (!conf.port) {
+		mylog("ERROR: no port in config");
+		exit(EXIT_FAILURE);
+	}
 	proctitle = argv[0]; // TODO: make it safe 
 	proctitle_size = strlen(argv[0])+strlen(argv[1])+2;
 	setproctitle("startup");
 
+	mylog_progname(PROG);
+	if (conf.log)
+		mylog_logpath(conf.log);
 	mylog("%s %s (using spool dir %s)", PROG, VER, conf.spool);
 	mylog("source ts: %s  compile ts: %s", SOURCE_TS, COMPILE_TS);
 
@@ -458,7 +229,7 @@ int main(int argc, char * argv[])
 	}
 
 	/* start main task */
-	reopen_com();
+	reopen_com(conf.port);
 
 	int pingrc;
 	for (int i=3; i>0; --i) {
@@ -488,7 +259,7 @@ int main(int argc, char * argv[])
 		int got = req(0xfb, buf, sizeof(buf));
 		if (got < 77) {
 			mylog("data too short (%d)", got);
-			reopen_com();
+			reopen_com(conf.port);
 		} else {
 			for (struct datadef * def = conf.def; def; def=def->next) {
 				if (def->pos > got-2)
@@ -496,8 +267,7 @@ int main(int argc, char * argv[])
 
 				double val = fp(buf+def->pos, def->decimals);
 
-				// post at least once per hour (and on first run)
-				if (def->uuid && (ts - def->pts > 60*60*1000 ||  trigger(def, val)))
+				if (def->uuid && ((conf.min_post_interval && ts-def->pts > conf.min_post_interval) || trigger(def, val)))
 				{
 					if (!def->posted && def->lts)
 						vzspool(def->lts, def->uuid, def->lval);
@@ -514,15 +284,18 @@ int main(int argc, char * argv[])
 			}
 			mylog("%s", str);
 		}
-		setproctitle("pausing...");
-		gettimeofday(&tv, NULL);
-		unsigned long long dur_us = ts * 1000 - ((unsigned long long) tv.tv_sec * 1000000 + tv.tv_usec);
-		useconds_t sleep_us = (READ_INTERVAL * 1000000) - dur_us;
-		if (sleep_us > 0)
-			usleep(sleep_us);
+		{
+			struct timeval tv2;
+			setproctitle("pausing...");
+			gettimeofday(&tv2, NULL);
+			unsigned long long dur_us = (tv2.tv_sec - tv.tv_sec) * 1e6 + (tv2.tv_usec - tv.tv_usec);
+			useconds_t sleep_us = conf.read_interval - dur_us;
+			if (sleep_us > 0)
+				usleep(sleep_us);
+		}
 		setproctitle("ping");
 		while (!ping())
-			reopen_com();
+			reopen_com(conf.port);
 	}
 }
 

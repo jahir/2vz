@@ -5,6 +5,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include "log.h"
+
 
 #define EPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
 
@@ -23,8 +25,11 @@
 static const char * logfile;
 static const char * progname;
 
-void mylog_logpath(const char * log, const char * prog) {
+void mylog_logpath(const char * log) {
 	logfile = log;
+}
+
+void mylog_progname(const char * prog) {
 	progname = prog;
 }
 

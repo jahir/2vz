@@ -8,7 +8,33 @@
 #include <stdio.h>
 
 #include "log.h"
-#include "thz-serial.h"
+#include "thz_com.h"
+
+// constants for serial communication
+#define CMD_GET 0x00
+#define CMD_SET 0x80
+#define SOH 0x01
+#define STX 0x02
+#define ETX 0x03
+#define ACK 0x06
+#define DLE 0x10
+
+
+#define EPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
+
+#if 0
+#define DPRINT(format, args...) printf("%s: "format"\n", __FUNCTION__, ##args)
+//#define DPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
+#else
+#define DPRINT(format, args...) do { /* nothing */ } while (0)
+#endif
+
+#if 0
+#define DUMP(pre, buf, len) dump(pre, buf, len)
+#else
+#define DUMP(pre, buf, len) do { /* nothing */ } while (0)
+#endif
+
 
 // serial device file descriptor
 static int com_fd = -1;
@@ -104,8 +130,8 @@ int ping()
 	BUF buf;
 	for (int i=5; i>0; --i) {
 		buf = STX;
-		write(com_fd, &buf, 1);
 		DPRINT("tx: STX");
+		write(com_fd, &buf, 1);
 		
 		int got = rx(&buf, sizeof(buf));
 		if (got > 0) {
@@ -118,37 +144,40 @@ int ping()
 
 BUF checksum(BUF * buf, size_t len)
 {
-	BUF sum = 1;
+	BUF sum = 0;
+//	DPRINT("[checksum] %zu bytes", len);
 	for(size_t i=0; i<len; ++i) {
+		if (i == 2) // skip checksum byte
+			continue;
 		sum += buf[i];
+//		DPRINT("[checksum] %2zu. %02hhx => %02hhx", i, buf[i], sum);
 	}
 	return sum;
 }
 
-int req(int cmd, BUF * outbuf, size_t bufsize)
+int req(BUF cmd, BUF * outbuf, size_t bufsize)
 {
 	int got;
-	BUF buf[1024];
+	BUF buf[1024] = { SOH, CMD_GET, 0, cmd, DLE, ETX };
 
-	buf[0] = SOH;
-	buf[1] = NUL;
-	buf[3] = cmd;
-	buf[4] = DLE;
-	buf[5] = ETX;
-	buf[2] = checksum(buf+3, 1);
+	// tx command
+	buf[2] = checksum(buf, 4);
 	DUMP("tx", buf, 6);
 	write(com_fd, buf, 6);
 	
+	// rx ack
 	got = rxx(buf, sizeof(buf), 2);
-	if (got > 0) {
-		DUMP("rx", buf, got);
-		if (buf[0] == DLE && buf[1] == STX) {
-			buf[0] = DLE;
-			write(com_fd, buf, 1);
-			DPRINT("tx: DLE");
-		}
-	}
+	if (got != 2)
+		return -1;
+	DUMP("rx", buf, got);
+	if (buf[0] != DLE && buf[1] != STX)
+		return -1;
+	// tx ack
+	buf[0] = DLE;
+	write(com_fd, buf, 1);
+	DUMP("tx", buf, 1);
 
+	// rx data
 	BUF * pos = buf;
 	BUF * endpos = buf + sizeof(buf);
 	int escape = 0;
@@ -158,48 +187,56 @@ int req(int cmd, BUF * outbuf, size_t bufsize)
 		if (got < 0) {
 			DUMP("rx", buf, pos-buf);
 			return -1;
-		} else if (got > 0) {
-			if (escape) {
-				if (*pos == DLE) {
-					escape = 0; // skip escaped DLE
-				} else if (*pos == ETX) {
-					++pos;
-					break; // end of transmission
-				} else {
-					EPRINT("bad escaped character %02hhx", *pos);
-					dump("rx", buf, pos-buf);
-					return -1;
-				}
-			} else if (skip) {
-				if (*pos != 0x18)
-					EPRINT("bad character after 0x2b: %02hx", *pos);
-				skip = 0;
-			} else { // not in escape state
-				if (*pos == DLE)
-					escape = 1;
-				else if (*pos == 0x2b)
-					skip = 1;
+		} else if (got != 1) {
+			continue;
+		}
+		if (escape) {
+			if (*pos == DLE) {
+				escape = 0; // skip escaped DLE
+			} else if (*pos == ETX) {
 				++pos;
+				break; // end of transmission
+			} else {
+				EPRINT("bad escaped character %02hhx", *pos);
+				dump("rx", buf, pos-buf);
+				return -1;
 			}
+		} else if (skip) {
+			if (*pos != 0x18)
+				EPRINT("bad character after 0x2b: %02hx", *pos);
+			skip = 0;
+		} else { // no special char received before
+			if (*pos == DLE)
+				escape = 1;
+			else if (*pos == 0x2b)
+				skip = 1;
+			++pos;
 		}
 	}
 	size_t len = pos-buf;
 	DUMP("rx", buf, len);
 	ack();
 	if (pos >= endpos) {
-		EPRINT("message too long (%u>%u)", len, sizeof(buf));
+		EPRINT("message too long (%zu>%zu)", len, sizeof(buf));
 		return -1;
 	}
 
 	char * err = NULL;
+	size_t datalen = pos - buf - 6;
 	if (len < 6)
 		err = "message too short";
-	else if (buf[0] != SOH || buf[1] != NUL)
-		err = "invalid header";
+	else if (buf[0] != SOH)
+		err = "no SOH at start";
+	else if (buf[1] == 0x02) 
+		err = "request checksum error";
+	else if (buf[1] != CMD_GET)
+		err = "request error";
 	else if (*(pos-2) != DLE || *(pos-1) != ETX)
 		err = "missing terminator";
-	else if (buf[2] != checksum(buf+3, len-5))
-		err = "checksum error";
+	else if (buf[2] != checksum(buf, len-2))
+		err = "reply checksum error";
+	else if (datalen > bufsize)
+		err = "buffer too small";
 
 	if (err != NULL) {
 		dump("rx", buf, len);
@@ -207,10 +244,47 @@ int req(int cmd, BUF * outbuf, size_t bufsize)
 		return -1;
 	}	
 
-	size_t datalen = pos - buf - 6;
 	memcpy(outbuf, buf+4, datalen);
 	return datalen;
 }
+
+
+int thz_set(BUF cmd, BUF * inbuf, size_t ilen)
+{
+	int got;
+	BUF buf[1024] = { SOH, CMD_SET, 0, cmd };
+
+	size_t in = 0, out = 4;
+	for (; in<ilen && out<sizeof(buf)-3; ++in) {
+		buf[out] = inbuf[in];
+		if (inbuf[in] == 0x2b)
+			buf[++out] = 0x18;
+		else if (inbuf[in] == 0x10)
+			buf[++out] = 0x10;
+		++out;
+	}
+	if (in != ilen)
+		return -1;
+	
+	buf[2] = checksum(buf, out);
+	buf[out++] = DLE;
+	buf[out] = ETX;
+	DUMP("tx", buf, out+1);
+	write(com_fd, buf, 6);
+
+	got = rxx(buf, sizeof(buf), 2);
+	if (got > 0) {
+		DUMP("rx", buf, got);
+		if (buf[0] == DLE && buf[1] == STX) {
+			buf[0] = DLE;
+			write(com_fd, buf, 1);
+			DUMP("tx", buf, 1);
+			return 1;
+		}
+	}
+	return 0;
+}
+
 
 double fp(BUF * buf, int decimals)
 {
