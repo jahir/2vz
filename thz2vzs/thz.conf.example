@@ -1,0 +1,30 @@
+# path to the log file (default: log to stderr)
+log /var/log/vz/vz.log
+
+# path to spool directory (vzspool)
+spool /var/spool/vz/
+
+# com device
+port /dev/serial/by-id/usb-ftdi_usb_serial_converter_ftxxxxxx-if00-port0
+# read data every x seconds (default: 60)
+read_interval 60
+# post values at least every x seconds (default 0, i.e. only triggered posts)
+#min_post_interval 1800
+
+# value definitions
+# <pos> is the byte position (after the header)
+# <name> is just used for logging
+# <decimals> is the number of decimals of the fixed-point value
+# <UUID> is the UUID used for posting to VZ
+# <threshold> trigger post if value changed more than the threshold.
+#             if threshold is negative, a post is triggered if value walks in, our or across
+#             the interval 0 < val < -threshold (kind of tri-state)
+#def <pos> <name> <decimals> <UUID> <threshold>
+def 2 TAussen 1 aaaaaaaa-aaaaaaaaa-aaaa-aaaaaaaaaaaa 0.2
+def 4 TVorlauf 1 
+def 6 TRuecklauf 1 
+def 10 TWarmwasser 1
+def 29 Abluft 0
+def 31 Zuluft 0
+def 53 VDurchfluss 2 bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -21 
+
