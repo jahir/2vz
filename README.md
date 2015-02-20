@@ -20,12 +20,15 @@ Various tools to read and send data to a volkszaehler.org middleware
 * create the log and spool directories
 
 	\# mkdir -p /var/log/vz /var/spool/vz
+	
 	\# chown vz: /var/log/vz /var/spool/vz
 
 * customize configuration
 
 	\# mkdir /etc/vz
+	
 	\# cp vzspool/vzspool.conf /etc/vz
+	
 	\# vi /etc/vz/vzspool.conf
 
 * build and install the tools you want
@@ -33,6 +36,7 @@ Various tools to read and send data to a volkszaehler.org middleware
 	\# cp vzspool/vzspool /usr/local/bin
 
 	\# cd d0
+	
 	\# make
 
 	\# (t.b.c.)
