@@ -16,7 +16,9 @@ read_interval 60
 # <name> is just used for logging
 # <decimals> is the number of decimals of the fixed-point value
 # <UUID> is the UUID used for posting to VZ
-#
+# <threshold> trigger post if value changed more than the threshold.
+#             if threshold is negative, a post is triggered if value walks in, our or across
+#             the interval 0 < val < -threshold (kind of tri-state)
 #def <pos> <name> <decimals> <UUID> <threshold>
 def 2 TAussen 1 aaaaaaaa-aaaaaaaaa-aaaa-aaaaaaaaaaaa 0.2
 def 4 TVorlauf 1 

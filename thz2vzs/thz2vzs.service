@@ -1,0 +1,25 @@
+# thz2vzs.service
+# copy this file to /etc/systemd/system/
+# create the file /etc/sysconfig/thz2vzs containing
+#   CONFIG=/etc/vz/thz.conf
+# and run "systemctl enable/start thz2vzs"
+
+[Unit]
+Description=thz2vzs
+After=local-fs.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/sysconfig/thz2vzs
+ExecStart=/usr/local/bin/thz2vzs $CONFIG
+ExecReload=/bin/kill -HUP $MAINPID
+#KillSignal=SIGTERM
+RestartSec=60
+Restart=always
+User=vz
+Nice=1
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+
