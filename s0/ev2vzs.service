@@ -1,0 +1,20 @@
+
+[Unit]
+Description=ev2vzs
+After=local-fs.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/sysconfig/ev2vzs
+ExecStart=/usr/local/bin/ev2vzs $CONFIG
+ExecReload=/bin/kill -HUP $MAINPID
+#KillSignal=SIGTERM
+RestartSec=10
+Restart=always
+User=vz
+Nice=1
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+
