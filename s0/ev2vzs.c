@@ -20,7 +20,7 @@
 #define VZ_SPOOLFMT "%s%llu_%s_%g"
 
 // DEBUG
-#if 1
+#if 0
 #define DPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
 #define DUMP(pre, buf, len) dump(pre, buf, len)
 #else
