@@ -346,6 +346,7 @@ int main(int argc, char* argv[])
 					struct channel * ch = button_channel[i];
 					struct tariff * trf  = *(ch->opbs) ? &ch->offpeak : &ch->peak;
 					struct tariff * trf2 = *(ch->opbs) ? &ch->peak : &ch->offpeak;
+					mylog("tariff switch: %s -> %s", trf2->name, trf->name);
 					if (trf2->ts)
 						vzspool(trf2->ts, trf->uuid, 0.0);
 					vzspool(tsms, trf2->uuid, 0.0);
