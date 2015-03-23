@@ -28,29 +28,26 @@
 #define DUMP(pre, buf, len) do { /* nothing */ } while (0)
 #endif
 
+#define DIM(vec) (sizeof(vec)/sizeof(vec[0]))
+
 typedef unsigned long long TSMS;
 
 // config /////////////////////////
 
-struct button {
-	uint16_t code;
-	const char * name;
-};
-
-struct button button_list[] = {
-	{ BTN_LEFT, "L" }, { BTN_RIGHT, "R" }, { BTN_MIDDLE, "M" }, { BTN_SIDE, "S" }, { BTN_EXTRA, "E" }, 
-	{ 0, NULL }
+struct tariff {
+	uint16_t code; // button code (from struct input_event)
+	const char * name; // channel name (for logging)
+	const char * uuid; // VZ UUID
+	TSMS ts;  // timestamp of last post
 };
 
 struct channel {
-	uint16_t ev_code; // code from struct input_event
-	const char * butnam; // button name (for logging)
-	const char * uuid; // VZ UUID
-	double val; // value per impulse
-	struct channel * cp; // tariff counter part channel
-	TSMS ts; // timestamp of last post (to log power)
-	unsigned int act : 1; // flag for active tariff (if there's a counterpart)
-	struct channel * next;
+        struct tariff peak; // peak tariff (the only one if there's no off-peak)
+        struct tariff offpeak; // off-peak tariff (if set)
+        double val; // value per impulse
+        int * opbs; // pointer to button_state value of off-peak button
+        unsigned int act : 1; // active tariff
+        struct channel * next;
 };
 
 struct config_t {
@@ -59,6 +56,17 @@ struct config_t {
 	char * dev;
 	struct channel * chan;
 };
+
+struct button {
+	uint16_t code;
+	const char * name;
+};
+
+struct button button_list[] = {
+	{ BTN_LEFT, "L" }, { BTN_RIGHT, "R" }, { BTN_MIDDLE, "M" }, { BTN_SIDE, "S" }, { BTN_EXTRA, "E" }, 
+};
+int button_state[DIM(button_list)];
+struct channel * button_channel[DIM(button_list)];
 
 // globals ///////////////////////
 
@@ -104,7 +112,6 @@ void mylog(char *fmt, ...) {
 	va_end(ap);
 }
 
-
 void handle_sig(int signum) {
 	if (signum == SIGHUP) {
 		mylog("reload on SIGHUP is not implemented yet");
@@ -126,13 +133,14 @@ void * myalloc(size_t size) {
 }
 
 int button_code(char * name, uint16_t * code) {
-	for (struct button * b=button_list; b->name; ++b) {
+	for (int i=0; i<DIM(button_list); ++i) {
+		struct button * b = &button_list[i];
 		if (strcmp(name, b->name))
 			continue;
 		*code = b->code;
-		return 1;
+		return i;
 	}
-	return 0;
+	return -1;
 }
 
 const char * CONF_SEP = " \r\n";
@@ -171,37 +179,35 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 		} else if (!strcmp(c, "button")) {
 			struct channel * ch = myalloc(sizeof(struct channel));
 			char *button, *val;
-			if (CONFIG_ELEM_PTR(c, button) && button_code(button, &ch->ev_code) &&
-			    CONFIG_ELEM(c, ch->butnam) && CONFIG_ELEM(c, ch->uuid) &&
+			if (CONFIG_ELEM_PTR(c, button) && button_code(button, &ch->peak.code) >= 0 &&
+			    CONFIG_ELEM(c, ch->peak.name) && CONFIG_ELEM(c, ch->peak.uuid) &&
 			    CONFIG_ELEM_PTR(c, val) && (ch->val = atof(val)))
 			{
-				DPRINT("line %d: button %s (0x%03hx) desc %s uuid %s val %g", lines, button, ch->ev_code, ch->butnam, ch->uuid, ch->val);
+				DPRINT("line %d: button %s (0x%03hx) name %s uuid %s val %g", lines, button, ch->peak.code, ch->peak.name, ch->peak.uuid, ch->val);
 				++chans;
 				*ch0 = ch;
 				ch0 = &ch->next;
+				if (CONFIG_ELEM_PTR(c, button)) { // off-peak tariff given
+					int bi; // button index
+					if ((bi = button_code(button, &ch->offpeak.code)) >= 0 &&
+					    CONFIG_ELEM(c, ch->offpeak.name) && CONFIG_ELEM(c, ch->offpeak.uuid))
+					{
+						if (button_channel[bi]) {
+							mylog("config error in line %d (button): button %s is already used by channel %s/%s",
+								lines, button, button_channel[bi]->peak.name, button_channel[bi]->offpeak.name);
+						} else {
+							button_channel[bi] = ch;
+							ch->opbs = &button_state[bi];
+							DPRINT("line %d:   off-peak button %s (0x%03hx) name %s uuid %s", 
+								lines, button, ch->offpeak.code, ch->offpeak.name, ch->offpeak.uuid);
+						}
+					} else {
+						mylog("config error in line %d (button off-peak)", lines);
+					}
+				}
 			} else {
 				mylog("config error in line %d (button)", lines);
-				free(ch);
-			}
-		} else if (!strcmp(c, "tariff_group")) {
-			char *u1, *u2;
-			if (CONFIG_ELEM_PTR(c, u1) && CONFIG_ELEM_PTR(c, u2)) {
-				struct channel *ch1 = NULL, *ch2 = NULL;
-				for (struct channel *ch=conf->chan; ch; ch=ch->next) {
-					if (!strcmp(ch->uuid, u1))
-						ch1 = ch;
-					else if (!strcmp(ch->uuid, u2))
-						ch2 = ch;
-				}
-				if (ch1 && ch2) {
-					DPRINT("line %d: tariff_group %s %s", lines, ch1->uuid, ch2->uuid);
-					ch1->cp = ch2;
-					ch2->cp = ch1;
-				} else {
-					mylog("config error in line %d (tariff_group): UUID not found", lines);
-				}
-			} else {
-				mylog("config error in line %d (tariff_group)", lines);
+				free(ch); // possible mem leak, but doesn't matter
 			}
 		} else {
 			mylog("config line %d invalid: '%.99s'", lines, line);
@@ -212,6 +218,18 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 }
 
 //////////////////////////////////
+
+#define button_pressed(p, n) !!(p[n>>3] & (1u << (n&7)))
+void read_button_states() {
+	uint8_t keys[(KEY_MAX<<3)+1];
+	memset(keys, 0, sizeof(keys));
+	ioctl(dev_fd, EVIOCGKEY(sizeof(keys)), keys);
+	for (int i=0; i<DIM(button_state); ++i) {
+		int code = button_list[i].code;
+		button_state[i] = button_pressed(keys, code);
+		DPRINT("button_state %d (%s): %d", i, button_list[i].name, button_state[i]);
+	}
+}
 
 void reopen_device() {
 	char * dev_path = conf.dev;
@@ -247,6 +265,8 @@ void reopen_device() {
 		strcpy(phys, "unknown");
 	}
 	mylog("device: %s on %s", devname, phys);
+
+	read_button_states();
 }
 
 
@@ -312,41 +332,56 @@ int main(int argc, char* argv[])
 			continue;
 		}
 
-		// mouse button pressed?
-		if (ev.type != EV_KEY || ev.value != 1)
+		if (ev.type != EV_KEY) // mouse button pressed?
+			continue;
+
+		TSMS tsms = (TSMS) ev.time.tv_sec * 1000 + ev.time.tv_usec / 1000;
+
+		// update button states		 
+		for (int i=0; i<DIM(button_state); ++i) {
+			if (ev.code == button_list[i].code) {
+				button_state[i] = ev.value;
+				DPRINT("button %d (%s) state changed to %d", i, button_list[i].name, ev.value);
+				if (button_channel[i] && button_channel[i]->act != ev.value) {
+					struct channel * ch = button_channel[i];
+					struct tariff * trf  = *(ch->opbs) ? &ch->offpeak : &ch->peak;
+					struct tariff * trf2 = *(ch->opbs) ? &ch->peak : &ch->offpeak;
+					mylog("tariff switch: %s -> %s", trf2->name, trf->name);
+					if (trf2->ts)
+						vzspool(trf2->ts, trf->uuid, 0.0);
+					vzspool(tsms, trf2->uuid, 0.0);
+					ch->act = ev.value;
+				}
+				break;
+			}
+		}
+
+		if  (ev.value != 1) // button released
 			continue;
 		// find channel
 		struct channel * ch;
 		for (ch = conf.chan; ch; ch=ch->next) {
-			if (ev.code == ch->ev_code)
+			if (ev.code == ch->peak.code)
 				break;
 		}
 		if (!ch)
 			continue;
 
-		TSMS tsms = (TSMS) ev.time.tv_sec * 1000 + ev.time.tv_usec / 1000;
 		char msg[64];
 
-		if (ch->ts) {
-			TSMS tdiff = tsms - ch->ts;
+		struct tariff * trf = ch->opbs && *(ch->opbs) ? &ch->offpeak : &ch->peak;
+		if (trf->ts) {
+			TSMS tdiff = tsms - trf->ts;
 			double p = (3600.0 * 1000) * ch->val / tdiff;
 			snprintf(msg, sizeof(msg), "tdiff %6llu ms   P %8.3f W", tdiff, p);
-
 		} else {
 			snprintf(msg, sizeof(msg), "first impulse");
 		}
-		ch->ts = tsms;
+		trf->ts = tsms;
 
-		mylog_ts(&ev.time, "%-13s: %s", ch->butnam, msg);
-		if (ch->cp && !ch->act) { // counterpart set and tariff switch
-			struct channel * ch2 = ch->cp;
-			if (ch2->ts)
-				vzspool(ch2->ts, ch->uuid, 0.0);
-			vzspool(tsms, ch2->uuid, 0.0);
-			ch->act = 1;
-			ch2->act = 0;
-		}
-		vzspool(tsms, ch->uuid, ch->val);
+		mylog_ts(&ev.time, "%-13s: %s", trf->name, msg);
+
+		vzspool(tsms, trf->uuid, ch->val);
 	}
 }
 

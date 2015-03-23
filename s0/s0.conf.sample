@@ -5,11 +5,13 @@ spool /var/spool/vz/
 
 device /dev/input/by-id/usb-Logitech_USB_Optical_Mouse-event-mouse
 
-#button BUTTON NAME UUID VAL
+# standard S0 device for a single tariff
+#button <button> <name> <uuid> <value>
 button M Haushalt xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx 1.25
 
-button L WP_HT aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa 1.25
-button R WP_NT bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb 1.25
-tariff_group d090e8e0-13d4-11e1-998f-3779c6cda4cf de6d0980-13d4-11e1-a9af-b31d434b03f6
-
+# S0 with peak/off-peak tariff
+# WP_HT is the peak tariff, which only used if button R is not active
+# when R is active (connected to the off-peak switch), WP_NT is used
+#button <S0 button> <peak name> <peak uuid> <value> [<off-peak button> <off-peak name> <off-peak uuid>] 
+button L WP_HT aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa 1.25 R WP_NT bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
 
