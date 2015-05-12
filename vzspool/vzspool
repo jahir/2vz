@@ -10,7 +10,7 @@ use HTTP::Status qw(:is);
 use Time::HiRes qw(gettimeofday);
 use POSIX qw(strftime);
 
-use constant VER => q(0.3.5);
+use constant VER => q(0.3.6);
 use constant CONFIG_FILE => q(/etc/vz/vzspool.conf);
 
 use constant {
@@ -154,7 +154,7 @@ my $inotify = new Linux::Inotify2
 $inotify->watch($VZ_SPOOL, IN_CLOSE_WRITE, sub { post($_[0]->name) } )
 	or die "inotify watch failed: $!\n";
 
-mylog "vzspool %s startup, watching %s", $VER, $VZ_SPOOL;
+mylog "vzspool %s startup, watching %s", VER, $VZ_SPOOL;
 while () {
 	# retry old files
 	respool();
