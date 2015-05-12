@@ -6,6 +6,7 @@ use Config::Simple;
 use Linux::Inotify2;
 #use Net::INET6Glue::INET_is_INET6;
 use LWP::UserAgent;
+use HTTP::Status qw(:is);
 use Time::HiRes qw(gettimeofday);
 use POSIX qw(strftime);
 
@@ -108,7 +109,10 @@ sub post($) {
 		}
 	} else {
 		mylog "%s : POST failed (%s: %s)", $name, $response->status_line, $response->decoded_content;
-		move2bad($name) if $response->code and $response->code == 400;
+		if ($response->code and is_client_error($response->code)) {
+			move2bad($name);
+			return 1;
+		}
 		return;
 	}
 }
