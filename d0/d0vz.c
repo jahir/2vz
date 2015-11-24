@@ -22,8 +22,6 @@ static struct config_t conf;
 void mylog(char *fmt, ...)
 {
 	va_list ap;
-	struct timeval tv;
-	char timebuf[32];
 	char logbuf[256];
 
 	va_start(ap, fmt);
@@ -31,6 +29,8 @@ void mylog(char *fmt, ...)
 	va_end(ap);
 
 	if (conf.log) {
+		struct timeval tv;
+		char timebuf[32];
 		gettimeofday(&tv, NULL);
 		strftime(timebuf, sizeof(timebuf), "%F %T", localtime(&tv.tv_sec)); // 2012-10-01 18:13:45.678
 		FILE* fh = fopen(conf.log, "a");
@@ -218,11 +218,9 @@ void d0loop(char * port) {
 			continue;
 		}
 		mylog("opened port device %s", port);
-		while (1) {
+		do {
 			sleep(2);
-			if (!d0read(d0))
-				break;
-		}
+		} while (d0read(d0));
 		mylog("d0read error, reopen port %s in 5 seconds", port);
 		d0_close(d0);
 		sleep(5);

@@ -132,7 +132,11 @@ int d0_read(D0 * d0) {
 	char buf[BUFSIZE];
 
 	// clean previously read data	
-	memset(d0+sizeof(struct pollfd), 0, sizeof(*d0)-sizeof(struct pollfd));
+	memset(d0->id, 0, sizeof(d0->id));
+	memset(d0->serial, 0, sizeof(d0->serial));
+	memset(d0->propid, 0, sizeof(d0->propid));
+	d0->vals = 0;
+	memset(d0->val, 0, sizeof(d0->val));
 
 	txline(fds, "/?!");
 	len = rxline(fds, buf);
