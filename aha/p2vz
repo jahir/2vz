@@ -1,0 +1,128 @@
+#!/usr/bin/perl
+#
+use strict;
+use warnings;
+use JSON;
+use LWP::UserAgent;
+use XML::Simple;# qw(:strict);
+use Encode qw(encode);
+use Digest::MD5 qw(md5_hex);
+use Time::HiRes qw(time gettimeofday);
+use POSIX qw(strftime);
+use Fcntl;
+
+use constant DEBUG => $ENV{DEBUG} || 0;
+#####################################################
+my $CONFIG = q(/etc/vz/aha.conf);
+my ($LOG, $VZ_SPOOL, $FB, $LOGIN_USER, $LOGIN_PASS, @devices);
+{	# read config
+	local $/;
+	open(my $fh, '<', $CONFIG) or die "open $CONFIG failed: $!\n";
+	my $cfg = from_json(scalar <$fh>, { relaxed => 1 });
+	close $fh;
+	($LOG, $VZ_SPOOL, $FB, $LOGIN_USER, $LOGIN_PASS) = map { $cfg->{$_} } qw(log spool url user pass);
+	@devices = @{$cfg->{power}};
+}
+#####################################################
+$| = 1;
+my $FB_LOGIN = q(login_sid.lua);
+my $FB_HOME = q(webservices/homeautoswitch.lua); # ?ain=<ain>&switchcmd=<cmd>&sid=<sid>
+#####################################################
+sub mylog(@) {
+        my $fmt = shift || '';
+        my @arg = (@_);
+        map { defined $_ ? s/[\r\n]+/ /g : 0E0 } @arg;
+        my ($ts, $tsfrac) = gettimeofday;
+        my $LOGFH;
+        if (defined $LOG) {
+                open $LOGFH, '>>', $LOG or die "open logfile '$LOG': $!\n";
+        } else {
+                $LOGFH = \*STDOUT;
+        }
+        printf $LOGFH "%s.%03d p2vz[%d] $fmt\n", strftime('%Y-%m-%d %H:%M:%S', localtime $ts), $tsfrac/1000, $$, @arg;
+        close $LOGFH if defined $LOG;
+}
+$SIG{__WARN__} = sub { mylog "WARN: %s", join(' ', @_); };
+$SIG{__DIE__}  = sub { mylog "DIE : %s", join(' ', @_); exit 255; };
+$SIG{TERM} = $SIG{QUIT} = $SIG{INT} = sub { mylog "exit (SIG%s)", $_[0]; exit 0; };
+
+sub get($) {
+	my ($path) = @_;
+	my $ua = LWP::UserAgent->new(timeout => 5);
+	my $url = $FB . $path;
+	mylog "get %s", $url if DEBUG;
+	my $response = $ua->get($url);
+	if ($response->is_success) {
+		my $content = $response->decoded_content;
+		chomp $content;
+		return $content;
+	} else {
+		mylog "get %s: %s", $url, $response->status_line;
+		return undef;
+	}
+}
+
+# http://avm.de/fileadmin/user_upload/Global/Service/Schnittstellen/AVM_Technical_Note_-_Session_ID.pdf
+sub getSid() {
+	my $xml = get($FB_LOGIN);
+	my $x = XMLin($xml);
+	mylog "login blocked for %d s", $x->{BlockTime} if $x->{BlockTime} > 0;
+	my $sid = $x->{SID};
+	if ($sid =~ /^0+$/) {
+		mylog "SID 0, trying login" if DEBUG;
+		my $chal = $x->{Challenge};
+		my $resp = $chal.'-'.md5_hex(encode("UTF-16LE", $chal.'-'.$LOGIN_PASS));
+		$xml = get($FB_LOGIN."?" . (defined $LOGIN_USER ? "username=$LOGIN_USER&" : '') . "response=$resp");
+		$x = XMLin($xml);
+		if ($x->{SID} =~ /^0+$/) {
+			mylog "login failed";
+			return undef;
+		}	
+	}
+	return $x->{SID};
+}
+
+# http://avm.de/fileadmin/user_upload/Global/Service/Schnittstellen/AHA-HTTP-Interface.pdf
+sub getHome($$;$$) {
+	my ($sid, $cmd, $ain, $param) = @_;
+	my $url = sprintf('%s?sid=%s&switchcmd=%s', $FB_HOME, $sid, $cmd);
+	$url .= "&ain=$ain" if defined $ain;
+	$url .= "&param=$param" if defined $param;
+	return get $url;
+}
+
+sub jstime() { return int(time * 1000 + 0.5) }
+
+sub vzspool($$$) {
+	my ($uuid, $val, $tsms) = @_;
+	my $file = $VZ_SPOOL . join('_', $tsms, $uuid, $val);
+	if (not sysopen my $fh, $file, O_WRONLY|O_CREAT|O_EXCL) {
+		mylog "vzspool '%s' failed: %s", $file, $!;
+	}
+}
+
+my %pow;
+my $sid = getSid;
+while (1) {
+	foreach (@devices) {
+		my ($name, $ain, $uuid) = @{$_};
+		next unless defined $uuid and $uuid ne '';
+		my ($pow);
+		while (1) {
+			$pow = getHome $sid, q(getswitchpower), $ain;
+			last if defined $pow;
+			$sid = getSid;
+			mylog "got SID %s", $sid // '<none>';
+		}
+		if (not exists $pow{$ain} or $pow{$ain} ne $pow) {
+			my $ts = jstime;
+			vzspool $uuid, $pow, $ts;
+			mylog "%s (%s %s): %.2f W", $name, $ain, $uuid, $pow/1000;
+			$pow{$ain} = $pow;
+		} else {
+			#mylog "%s (%s %s): %.2f W (unchanged)", $name, $ain, $uuid, $pow/1000;
+		}
+	}
+	sleep 1;
+}
+
