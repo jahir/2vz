@@ -294,8 +294,10 @@ int main(int argc, char * argv[])
 				usleep(sleep_us);
 		}
 		setproctitle("ping");
-		while (!ping())
+		while (!ping()) {
+			mylog("ping failed, trying to reopen %s", conf.port);
 			reopen_com(conf.port);
+		}
 	}
 }
 

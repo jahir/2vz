@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -42,16 +43,16 @@ static int com_fd = -1;
 /*********************************************************************************/
 void reopen_com(const char * port) {
 	if (com_fd >= 0) {
-		//mylog("device already open, closing");
+		mylog("device already open, closing");
 		close(com_fd);
 		sleep(1);
 	}
 	while (1) {
-		//mylog("opening %s", port);
+		mylog("opening %s", port);
 		com_fd = open(port, O_RDWR|O_NONBLOCK|O_NOCTTY); // |O_CLOEXEC);
 		if (com_fd >= 0)
 			break;
-		//mylog("could not open %s (retry in 10s): %s (%d)", port, strerror(errno), errno);
+		mylog("could not open %s (retry in 10s): %s (%d)", port, strerror(errno), errno);
 		sleep(10);
 	}
 
@@ -62,7 +63,7 @@ void reopen_com(const char * port) {
 	tcflush(com_fd, TCIFLUSH);
 	tcsetattr(com_fd, TCSANOW, &newtio);
 
-	//mylog("opened %s", port);
+	mylog("opened %s", port);
 }
 
 void dump(char * pre, BUF * buf, ssize_t len)
