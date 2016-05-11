@@ -1,0 +1,17 @@
+
+[Unit]
+Description=AHA power to volkszaehler.org
+After=network.target local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/p2vz
+RestartSec=60
+Restart=always
+User=vz
+Nice=1
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+
