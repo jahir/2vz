@@ -13,9 +13,9 @@ use POSIX qw(strftime);
 use constant VER => q(0.3.6);
 use constant CONFIG_FILE => q(/etc/vz/vzspool.conf);
 
-use constant {
-	DEFAULT_HTTP_TIMEOUT => 10,
-	DEFAULT_RETRY => 60,
+use constant DEFAULTS => {
+	http_timeout => 10,
+	retry => 60,        # retry time
 };
 
 ######################
@@ -44,16 +44,12 @@ $SIG{HUP} = sub {
 };
 
 # config settings
-my ($VZ_SPOOL, $VZ_URL, $HTTP_TIMEOUT, $RETRY);
+my ($VZ_SPOOL, $VZ_SPOOL_BAD, $VZ_URL, $HTTP_TIMEOUT, $RETRY);
 {
 	my $cfg = new Config::Simple(CONFIG_FILE) or die Config::Simple->error();
 	$LOG = $cfg->param('logfile') or die "logfile not set\n";
-	$VZ_SPOOL = $cfg->param('spooldir') or die "spooldir not set\n";
-	$VZ_SPOOL .= '/' unless substr($VZ_SPOOL, -1) eq '/';
-	$VZ_URL = $cfg->param('url') or die "url not set\n";
-	$VZ_URL .= '/' unless substr($VZ_URL, -1) eq '/';
-	$HTTP_TIMEOUT = $cfg->param('http_timeout') || DEFAULT_HTTP_TIMEOUT; # http timeout in seconds
-	$RETRY = ($cfg->param('retry') || DEFAULT_RETRY) * 60; # retry time in minutes
+	($VZ_SPOOL, $VZ_SPOOL_BAD, $VZ_URL) = map { my $p = $cfg->param($_) or die "$_ not set\n"; $p .= '/' unless substr($p, -1) eq '/'; $p } qw(spooldir spooldir_bad url);
+	($HTTP_TIMEOUT, $RETRY) = map { $cfg->param($_) // DEFAULTS->{$_} } qw(http_timeout retry);
 }
 
 ######################
@@ -67,8 +63,8 @@ my $UA = LWP::UserAgent->new(
 sub move2bad($) {
 	my ($f) = @_;
 	my $old = $VZ_SPOOL.$f;
-	my $new = $VZ_SPOOL.'bad/'.$f;
-	mkdir $VZ_SPOOL.'bad' unless -d $VZ_SPOOL.'bad';
+	my $new = $VZ_SPOOL_BAD.$f;
+	mkdir $VZ_SPOOL.'bad' unless -d $VZ_SPOOL_BAD;
 	link $old, $new 
 		or mylog "move2bad: link %s failed: %s", $f, $!;
 	if (not unlink $old) {
@@ -126,25 +122,25 @@ sub sec2hr($) {
 }
 
 sub respool() {
-	my $dh;
-	if (not opendir $dh, $VZ_SPOOL) {
-		mylog "ERROR: opendir %s failed: %s", $VZ_SPOOL, $!;
-		return;
-	}
-	my $now = time;
-	while (my $f = readdir $dh) {
-		next if substr($f,0,1) eq '.'; # skip . files
-		my $fn = $VZ_SPOOL . $f;
-		next unless -f $fn;
-		my ($atime, $mtime) = (stat($fn))[8,9]; # last try is stored in atime
-		if ($now-$atime > $RETRY or ($atime == $mtime and $now-$mtime > 10)) {
-			mylog "retry %s (age %s, %s)", $f, sec2hr($now-$mtime), 
-				($atime == $mtime ? 'first try' : 'last tried '.sec2hr($now-$atime).' ago');
-			post($f) or 
-				utime $now, $mtime, $fn;
+	return unless $RETRY > 0;
+	if (opendir my $dh, $VZ_SPOOL) {
+		my $now = time;
+		while (my $f = readdir $dh) {
+			next if substr($f,0,1) eq '.'; # skip . files
+			my $fn = $VZ_SPOOL . $f;
+			next unless -f $fn;
+			my ($atime, $mtime) = (stat($fn))[8,9]; # last try is stored in atime
+			if ($now-$atime > $RETRY or ($atime == $mtime and $now-$mtime > 2+$HTTP_TIMEOUT)) {
+				mylog "retry %s (age %s, %s)", $f, sec2hr($now-$mtime),
+					($atime == $mtime ? 'first try' : 'last tried '.sec2hr($now-$atime).' ago');
+				post($f) or
+					utime $now, $mtime, $fn;
+			}
 		}
+		closedir $dh;
+	} else {
+		mylog "ERROR: opendir %s failed: %s", $VZ_SPOOL, $!;
 	}
-	closedir $dh;
 }
 ######################
 #main
