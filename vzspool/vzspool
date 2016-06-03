@@ -10,7 +10,7 @@ use HTTP::Status qw(:is);
 use Time::HiRes qw(gettimeofday);
 use POSIX qw(strftime);
 
-use constant VER => q(0.3.6);
+use constant VER => q(0.3.7);
 use constant CONFIG_FILE => q(/etc/vz/vzspool.conf);
 
 use constant DEFAULTS => {
