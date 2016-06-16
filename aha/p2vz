@@ -108,13 +108,21 @@ while (1) {
 		my ($name, $ain, $uuid) = @{$_};
 		next unless defined $uuid and $uuid ne '';
 		my ($pow);
-		while (1) {
+		foreach (1..3) {
 			$pow = getHome $sid, q(getswitchpower), $ain;
 			last if defined $pow;
 			$sid = getSid;
 			mylog "got SID %s", $sid // '<none>';
 		}
-		if (not exists $pow{$ain} or $pow{$ain} ne $pow) {
+		next unless defined $pow;
+		if ($pow eq 'inval') {
+			# adapter probably not connected, ignor for now
+			# todo: log message every once in a while (e.g. 1/hour)
+		}
+		elsif ($pow !~ /^\d+$/) {
+			mylog "%s (%s %s): invalid value '%.50s'", $name, $ain, $uuid, $pow;
+		}
+		elsif (not exists $pow{$ain} or $pow{$ain} ne $pow) {
 			my $ts = jstime;
 			vzspool $uuid, $pow, $ts;
 			mylog "%s (%s %s): %.2f W", $name, $ain, $uuid, $pow/1000;
