@@ -1,12 +1,12 @@
 #include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+#include <poll.h>
 
 #include "log.h"
 #include "thz_com.h"
@@ -20,6 +20,8 @@
 #define ACK 0x06
 #define DLE 0x10
 
+#define REOPEN_WAITTIME 10
+#define POLL_TIMEOUT 2
 
 #define EPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
 
@@ -39,6 +41,7 @@
 
 // serial device file descriptor
 static int com_fd = -1;
+static struct pollfd pollfds = { -1, POLLIN, 0 };
 
 /*********************************************************************************/
 void reopen_com(const char * port) {
@@ -53,8 +56,9 @@ void reopen_com(const char * port) {
 		if (com_fd >= 0)
 			break;
 		mylog("could not open %s (retry in 10s): %s (%d)", port, strerror(errno), errno);
-		sleep(10);
+		sleep(REOPEN_WAITTIME);
 	}
+	pollfds.fd = com_fd;
 
 	struct termios newtio;
 	memset(&newtio, 0, sizeof(newtio)); /* clear struct for new port settings */
@@ -77,23 +81,27 @@ void dump(char * pre, BUF * buf, ssize_t len)
 
 int rx(BUF * buf, size_t bufsize)
 {
-	fd_set rfds;
-	FD_ZERO(&rfds);
-	FD_SET(com_fd, &rfds);
-	struct timeval tv = { 2, 0 };
-	int retval = select(com_fd+1, &rfds, NULL, NULL, &tv);
+	int retval = poll(&pollfds, 1, POLL_TIMEOUT*1000);
 
-	if (retval == -1) {
-	       perror("select()");
-	} else if (retval) {
-		int got = read(com_fd, buf, bufsize);
-		if (got < 0) {
-			perror("read");
+	if (retval > 0) {
+		if (pollfds.revents & POLLIN) {
+			int got = read(com_fd, buf, bufsize);
+			if (got > 0) {
+				return got;
+			} else if (got < 0) {
+				perror("rx: read()");
+			} else { // 0
+				EPRINT("eof");
+			}
+		} else if (pollfds.revents & POLLERR) {
+			EPRINT("poll reported error condition (%hd)", pollfds.revents);
 		} else {
-			return got;
+			EPRINT("poll revents = %hd", pollfds.revents);
 		}
-	} else {
-		EPRINT("rx: timeout");
+	} else if (retval < 0) {
+		perror("rx: poll()");
+	} else { // 0
+		EPRINT("timeout");
 	}
 
 	return -1;
