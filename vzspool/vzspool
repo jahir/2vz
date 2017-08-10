@@ -57,7 +57,7 @@ my ($VZ_SPOOL, $VZ_SPOOL_BAD, $VZ_URL, $HTTP_TIMEOUT, $RETRY);
 my $UA = LWP::UserAgent->new(
 	timeout => $HTTP_TIMEOUT,
 	agent => 'vzspool '.VER.' ',
-	keep_alive => 1,
+	keep_alive => 5,
 );
 
 sub move2bad($) {
