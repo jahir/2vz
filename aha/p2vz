@@ -101,7 +101,12 @@ sub vzspool($$$) {
 	}
 }
 
-my %pow;
+# remember previous measurement details (timestamp, value, stored)
+# this is used to prevent storing the same value again and again (as this provides no useful information).
+# but on value changes, the previous value must be stored (if not already done), so the time interval of the
+# change is narrowed down as much as possible, and the frontend can draw a nice horizontal line for the 
+# unchanged interval
+my %prev;
 my $sid = getSid;
 while (1) {
 	foreach (@devices) {
@@ -116,19 +121,23 @@ while (1) {
 		}
 		next unless defined $pow;
 		if ($pow eq 'inval') {
-			# adapter probably not connected, ignor for now
+			# adapter probably not connected, ignore for now
 			# todo: log message every once in a while (e.g. 1/hour)
 		}
 		elsif ($pow !~ /^\d+$/) {
 			mylog "%s (%s %s): invalid value '%.50s'", $name, $ain, $uuid, $pow;
 		}
-		elsif (not exists $pow{$ain} or $pow{$ain} ne $pow) {
+		elsif (not exists $prev{$ain} or $prev{$ain}{value} ne $pow) {
+			if (exists $prev{$ain} and not $prev{$ain}{sent}) {
+				vzspool $uuid, $prev{$ain}{value}, $prev{$ain}{ts};
+			}
 			my $ts = jstime;
 			vzspool $uuid, $pow, $ts;
 			mylog "%s (%s %s): %.2f W", $name, $ain, $uuid, $pow/1000;
-			$pow{$ain} = $pow;
+			$prev{$ain} = { ts => $ts, value => $pow, sent => 1 };
 		} else {
 			#mylog "%s (%s %s): %.2f W (unchanged)", $name, $ain, $uuid, $pow/1000;
+			$prev{$ain} = { ts => jstime, value => $pow, sent => 0 };
 		}
 	}
 	sleep 1;
