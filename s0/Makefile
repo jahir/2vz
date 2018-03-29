@@ -5,7 +5,7 @@ all: ev2vzs
 ev2vzs: ev2vzs.c
 	date +'#define SOURCE_TS "%F %T"' -d @$$(stat -L -c %Y $<) > ev2vzs_ts.h
 	date +'#define COMPILE_TS "%F %T"' >> ev2vzs_ts.h
-	gcc -o $@ $(CFLAGS) $<
+	gcc -o $@ $(CFLAGS) -Werror $<
 
 .PHONY: clean install
 
