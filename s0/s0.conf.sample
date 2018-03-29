@@ -3,6 +3,10 @@ log /var/log/vz/vz.log
 
 spool /var/spool/vz/
 
+# if this is set (and > 0), impulses are not sent immediately, but summed up and sent in intervals instead.
+# 5s resolution is usually more than enough, and it massively reduced database size and load for high power situations.
+interval 5
+
 device /dev/input/by-id/usb-Logitech_USB_Optical_Mouse-event-mouse
 
 # standard S0 device for a single tariff
