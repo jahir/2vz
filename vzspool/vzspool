@@ -10,11 +10,12 @@ use HTTP::Status qw(:is);
 use Time::HiRes qw(gettimeofday);
 use POSIX qw(strftime);
 
-use constant VER => q(0.3.7);
+use constant VER => q(0.3.8);
 use constant CONFIG_FILE => q(/etc/vz/vzspool.conf);
 
 use constant DEFAULTS => {
 	http_timeout => 10,
+	http_keepalive => undef,
 	retry => 60,        # retry time
 };
 
@@ -44,12 +45,12 @@ $SIG{HUP} = sub {
 };
 
 # config settings
-my ($VZ_SPOOL, $VZ_SPOOL_BAD, $VZ_URL, $HTTP_TIMEOUT, $RETRY);
+my ($VZ_SPOOL, $VZ_SPOOL_BAD, $VZ_URL, $HTTP_TIMEOUT, $HTTP_KEEPALIVE, $RETRY);
 {
 	my $cfg = new Config::Simple(CONFIG_FILE) or die Config::Simple->error();
 	$LOG = $cfg->param('logfile') or die "logfile not set\n";
 	($VZ_SPOOL, $VZ_SPOOL_BAD, $VZ_URL) = map { my $p = $cfg->param($_) or die "$_ not set\n"; $p .= '/' unless substr($p, -1) eq '/'; $p } qw(spooldir spooldir_bad url);
-	($HTTP_TIMEOUT, $RETRY) = map { $cfg->param($_) // DEFAULTS->{$_} } qw(http_timeout retry);
+	($HTTP_TIMEOUT, $HTTP_KEEPALIVE, $RETRY) = map { $cfg->param($_) // DEFAULTS->{$_} } qw(http_timeout http_keepalive retry);
 }
 
 ######################
@@ -57,7 +58,7 @@ my ($VZ_SPOOL, $VZ_SPOOL_BAD, $VZ_URL, $HTTP_TIMEOUT, $RETRY);
 my $UA = LWP::UserAgent->new(
 	timeout => $HTTP_TIMEOUT,
 	agent => 'vzspool '.VER.' ',
-	keep_alive => 5,
+	keep_alive => $HTTP_KEEPALIVE,
 );
 
 sub move2bad($) {
