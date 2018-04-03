@@ -9,8 +9,9 @@ use LWP::UserAgent;
 use HTTP::Status qw(:is);
 use Time::HiRes qw(gettimeofday);
 use POSIX qw(strftime);
+use File::Copy;
 
-use constant VER => q(0.3.8);
+use constant VER => q(0.3.9);
 use constant CONFIG_FILE => q(/etc/vz/vzspool.conf);
 
 use constant DEFAULTS => {
@@ -61,20 +62,6 @@ my $UA = LWP::UserAgent->new(
 	keep_alive => $HTTP_KEEPALIVE,
 );
 
-sub move2bad($) {
-	my ($f) = @_;
-	my $old = $VZ_SPOOL.$f;
-	my $new = $VZ_SPOOL_BAD.$f;
-	mkdir $VZ_SPOOL.'bad' unless -d $VZ_SPOOL_BAD;
-	link $old, $new 
-		or mylog "move2bad: link %s failed: %s", $f, $!;
-	if (not unlink $old) {
-		mylog "move2bad: unlink %s failed: %s", $f, $!;
-		return;
-	}
-	return 1;
-}
-
 sub post($) {
 	my ($name) = @_;
 	return if substr($name,0,1) eq '.';
@@ -107,7 +94,7 @@ sub post($) {
 	} else {
 		mylog "%s : POST failed (%s: %s)", $name, $response->status_line, $response->decoded_content;
 		if ($response->code and is_client_error($response->code)) {
-			move2bad($name);
+			move $VZ_SPOOL.$name, $VZ_SPOOL_BAD;
 			return 1;
 		}
 		return;
