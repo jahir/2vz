@@ -16,11 +16,13 @@
 #include "ev2vzs_ts.h"
 
 #define PROG "ev2vzs"
-#define VER "0.4.0"
+#define VER "0.5.2"
 // /path/to/spool/timestamp_uuid_value
 #define VZ_SPOOLFMT "%s%llu_%s_%g"
 
-//#define DEBUG
+#if 0
+#define DEBUG
+#endif
 #ifdef DEBUG
 #define DPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
 #define DUMP(pre, buf, len) dump(pre, buf, len)
@@ -131,7 +133,7 @@ void * myalloc(size_t size) {
 	void * p = calloc(1, size);
 	if (p)
 		return p;
-	mylog("malloc %zd bytes failed: %s", size, strerror(errno));
+	mylog("malloc %zd bytes failed: %m", size);
 	exit(EXIT_FAILURE);
 }
 
@@ -153,7 +155,7 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 	memset(conf, 0, sizeof(*conf));
 	FILE * fh = fopen(conffile, "r");
 	if (!fh) {
-		mylog("open config '%s' failed: %s", conffile, strerror(errno));
+		mylog("open config '%s' failed: %m", conffile);
 		return NULL;
 	}
 	char line[1024];
@@ -232,9 +234,12 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 
 //////////////////////////////////
 
+#define bytes_for_bits(n) ((n>>3) + (!!(n&7) << 2))
+#define button_set(p, n) p[n>>3] |= 1u << (n&7)
 #define button_pressed(p, n) !!(p[n>>3] & (1u << (n&7)))
+
 void update_tariff_states() {
-	uint8_t keys[(KEY_MAX>>3)+1];
+	uint8_t keys[bytes_for_bits(KEY_CNT)];
 	memset(keys, 0, sizeof(keys));
 	ioctl(dev_fd, EVIOCGKEY(sizeof(keys)), keys);
 	for (struct channel *ch=conf.chan; ch; ch=ch->next)
@@ -257,10 +262,18 @@ void reopen_device() {
 		dev_fd = open(dev_path, O_RDWR | (conf.interval > 0 ? O_NONBLOCK : 0) );
 		if (dev_fd >= 0)
 			break;
-		mylog("could not open %s: %s", dev_path, strerror(errno));
+		mylog("could not open %s: %m", dev_path);
 		sleep(5);
 	}
 	mylog("opened %s", dev_path);
+	{ // set event mask. masking EV_SYN is no good (will filter all events), so only EV_MSC will do
+		uint8_t codes[MSC_CNT]; // don't know why bytes_for_bits() does not work here
+		memset(codes, 0, sizeof(codes));
+		struct input_mask mask = { EV_MSC, sizeof(codes), (uint64_t)codes };
+		if (ioctl(dev_fd, EVIOCSMASK, &mask) < 0)
+			mylog("warning: failed to set EV_MSC event mask (%d) (%m)", mask.codes_size);
+	}
+
 	int version;
 	if (ioctl(dev_fd, EVIOCGVERSION, &version))
 		perror("evdev ioctl");
@@ -295,7 +308,7 @@ void vzspool(TSMS tsms, const char * uuid, const double val) {
 	snprintf(spoolfile, sizeof(spoolfile), VZ_SPOOLFMT, conf.spool, tsms, uuid, val);
 	int fd = open(spoolfile, O_CREAT|O_EXCL|O_WRONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 	if (fd < 0) {
-		mylog("ERROR: open %s: %s", spoolfile, strerror(errno));
+		mylog("ERROR: open %s: %m", spoolfile);
 	} else {
 		DPRINT("vzspool %s", spoolfile);
 		close(fd);
@@ -344,21 +357,20 @@ int main(int argc, char* argv[])
 			struct pollfd fds[1] = { {dev_fd, POLLIN, 0} };
 			int timeout;
 			if (gettimeofday(&tv, NULL) != 0) {
-				mylog("WARNING: gettimeofday error: %s (%d)", strerror(errno), errno);
-				timeout = 1000; // fallback poll timeout. don't know how this should happen
-			} else {
-				timeout = (next_spool_time - tv.tv_sec) * 1000 - tv.tv_usec / 1000;
-				//if (timeout < 0)
-				//	timeout = (conf.interval - (tv.tv_sec % conf.interval)) * 1000 - tv.tv_usec / 1000;
+				mylog("WARNING: gettimeofday error: %m");
+				tv.tv_sec = time(NULL);
+				if (tv.tv_sec == -1)
+					tv.tv_sec = next_spool_time - 1;
+				tv.tv_usec = 500000; //
 			}
-//			if (tv.tv_sec < next_spool_time) {
-			if (timeout > 0) {
+			if (tv.tv_sec < next_spool_time) {
+				// timeout = (next_spool_time - tv.tv_sec) << 10 - (tv.tv_usec >> 10); // max err: 144 ms 
+				timeout = (next_spool_time - tv.tv_sec) * 1000 - tv.tv_usec / 1000; // exact timeout
 				DPRINT("waiting for event, timeout %dms", timeout);
 				ready = poll(fds, 1, timeout);
 				if (ready < 0)
-					mylog("poll error: %s (%d)", strerror(errno), errno);
-				time(&tv.tv_sec);
-				tv.tv_usec = 0;
+					mylog("poll error: %m");
+				tv.tv_sec = time(NULL);
 			} else {
 				ready = 0;
 			}
@@ -378,7 +390,8 @@ int main(int argc, char* argv[])
 						trf->cnt = 0;
 					}
 				}
-				next_spool_time += conf.interval;
+				while (next_spool_time <= tv.tv_sec)
+					next_spool_time += conf.interval;
 #ifdef DEBUG
 				char timebuf[32];
 				strftime(timebuf, sizeof(timebuf), "%F %T", localtime(&next_spool_time)); // 2012-10-01 18:13:45
@@ -388,15 +401,15 @@ int main(int argc, char* argv[])
 		}
 
 		while (ready > 0) { // read loop 
-			struct input_event ev;
-			ssize_t rc = read(dev_fd, &ev, sizeof(ev));
+			struct input_event evs[6]; // mouse input events usually come in packets of 3 (EV_MSC+EV_KEY+EV_SYN), we read a multiple of it
+			ssize_t rc = read(dev_fd, evs, sizeof(evs));
 			if (rc == 0) {
 				mylog("read: EOF??");
 				reopen_device();
 				break;
 			} else if (rc < 0) {
 				if (errno != EAGAIN) {
-					mylog("read error: %s (%d)", strerror(errno), errno);
+					mylog("read error: %m");
 					reopen_device();
 				} else
 					DPRINT("read EAGAIN");
@@ -409,45 +422,49 @@ int main(int argc, char* argv[])
 			// code: BTN_LEFT BTN_RIGHT BTN_MIDDLE ...
 			// value: 0 => released, 1 => pressed (and 2 => autorepeat)
 
-			if (ev.type != EV_KEY) { // mouse button event?
-				DPRINT("ignoring event type %d (code 0x%x value 0x%x)", ev.type, ev.code, ev.value);
-				continue;
-			} else
-				DPRINT("handling event type %d (code 0x%x value 0x%x)", ev.type, ev.code, ev.value);
+			int cnt = rc / sizeof(evs[0]);
+			for (int i=0; i<cnt; ++i) {
+				struct input_event *ev = &evs[i];
+				if (ev->type != EV_KEY) { // mouse button event?
+					DPRINT("ignoring event type %d (code 0x%x value 0x%x)", ev->type, ev->code, ev->value);
+					continue;
+				} else
+					DPRINT("handling event type %d (code 0x%x value 0x%x)", ev->type, ev->code, ev->value);
 
-			for (struct channel * ch = conf.chan; ch; ch=ch->next) {
-				if (ch->btn_trf && ch->btn_trf->code == ev.code) { // tariff button changed? then switch tariff
-					if (ch->act != ev.value) {
-						ch->act = (ev.value != 0); // normalize to 0 and 1
-						struct tariff * trf_cur = &ch->trf[ch->act];
-						struct tariff * trf_oth = &ch->trf[!ch->act];
-						mylog("tariff switch: %s -> %s", trf_oth->name, trf_cur->name);
-						if (trf_oth->ts)
-							vzspool(trf_oth->ts, trf_cur->uuid, 0.0); // send 0-val with last timestamp of previous tariff for _current_ tariff
-						vzspool(CALC_TSMS(ev.time), trf_oth->uuid, 0.0); // send 0-val with current timestamp for _previous_ tariff
-					} else
-						mylog("Warning: tariff button %s event (%d) without state change", ch->btn_trf->name, ev.value);
-					break;
-				} // tariff button
-				if (ev.value == 1 && ch->btn_imp && ch->btn_imp->code == ev.code) { // impulse for channel
-					struct tariff * trf = &ch->trf[ch->act];
-					TSMS tsms = (TSMS) ev.time.tv_sec * 1000 + ev.time.tv_usec / 1000;
-					if (trf->ts) {
-						TSMS tdiff = tsms - trf->ts;
-						double p = (3600.0 * 1000) * ch->val / tdiff;
-						mylog_ts(&ev.time, "%-13s: tdiff %6llu ms   P %8.3f W", trf->name, tdiff, p);
-					} else {
-						mylog_ts(&ev.time, "%-13s: first impulse", trf->name);
-					}
-					trf->ts = tsms;
+				for (struct channel * ch = conf.chan; ch; ch=ch->next) {
+					if (ch->btn_trf && ch->btn_trf->code == ev->code) { // tariff button changed? then switch tariff
+						if (ch->act != ev->value) {
+							ch->act = (ev->value != 0); // normalize to 0 and 1
+							struct tariff * trf_cur = &ch->trf[ch->act];
+							struct tariff * trf_oth = &ch->trf[!ch->act];
+							mylog("tariff switch: %s -> %s", trf_oth->name, trf_cur->name);
+							if (trf_oth->ts)
+								vzspool(trf_oth->ts, trf_cur->uuid, 0.0); // send 0-val with last timestamp of previous tariff for _current_ tariff
+							vzspool(CALC_TSMS(ev->time), trf_oth->uuid, 0.0); // send 0-val with current timestamp for _previous_ tariff
+						} else
+							mylog("Warning: tariff button %s event (%d) without state change", ch->btn_trf->name, ev->value);
+						break;
+					} // tariff button
+					if (ev->value == 1 && ch->btn_imp && ch->btn_imp->code == ev->code) { // impulse for channel
+						struct tariff * trf = &ch->trf[ch->act];
+						TSMS tsms = (TSMS) ev->time.tv_sec * 1000 + ev->time.tv_usec / 1000;
+						if (trf->ts) {
+							TSMS tdiff = tsms - trf->ts;
+							double p = (3600.0 * 1000) * ch->val / tdiff;
+							mylog_ts(&ev->time, "%-13s: tdiff %6llu ms   P %8.3f W", trf->name, tdiff, p);
+						} else {
+							mylog_ts(&ev->time, "%-13s: first impulse", trf->name);
+						}
+						trf->ts = tsms;
 
-					if (conf.interval > 0)
-						++(trf->cnt);
-					else
-						vzspool(tsms, trf->uuid, ch->val);
-					break;
-				} // impulse
-			} // find channel for button
+						if (conf.interval > 0)
+							++(trf->cnt);
+						else
+							vzspool(tsms, trf->uuid, ch->val);
+						break;
+					} // impulse
+				} // find channel for button
+			} // loop over events
 		} // while ready and something was read
 	} // loop forever
 } // main
