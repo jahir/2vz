@@ -86,15 +86,28 @@ int dev_fd = -1;
 
 /*** logging and signal handling *************************************************/
 
+// returns a readable timestamp "YYYY-mm-dd HH:MM:SS.sss" from tvp
+const char * strtime(struct timeval * tvp) {
+	static char buf[24]; // strlen + \0
+	if (strftime(buf, sizeof(buf), "%F %T.", localtime(&tvp->tv_sec)) > 0) {
+        div_t dm = 
+		 div(tvp->tv_usec, 1000000);
+        dm = div(dm.rem,    100000); buf[20] = '0' + dm.quot;
+        dm = div(dm.rem,     10000); buf[21] = '0' + dm.quot;
+        dm = div(dm.rem,      1000); buf[22] = '0' + dm.quot;
+		buf[23] = '\0';
+	} else // fall back to unix timestamp
+		snprintf(buf, sizeof(buf), "%10ld.%06ld", tvp->tv_sec, tvp->tv_usec);
+	return buf;
+}
+
 void mylog_ll(struct timeval * tvp, char *fmt, va_list ap) {
 	char logbuf[256];
 	vsnprintf(logbuf, sizeof(logbuf), fmt, ap);
 	if (conf.log) {
 		FILE* fh = fopen(conf.log, "a");
 		if (fh) {
-			char timebuf[32];
-			strftime(timebuf, sizeof(timebuf), "%F %T", localtime(&tvp->tv_sec)); // 2012-10-01 18:13:45
-			fprintf(fh, "%s.%03u %s[%d] %s\n", timebuf, (unsigned)(tvp->tv_usec/1000), PROG, getpid(), logbuf);
+			fprintf(fh, "%s %s[%d] %s\n", strtime(tvp), PROG, getpid(), logbuf);
 			fclose(fh);
 		} else {
 			perror("mylog fopen");
@@ -402,11 +415,7 @@ int main(int argc, char* argv[])
 				}
 				while (next_spool_time <= tv.tv_sec)
 					next_spool_time += conf.interval;
-#ifdef DEBUG
-				char timebuf[32];
-				strftime(timebuf, sizeof(timebuf), "%F %T", localtime(&next_spool_time)); // 2012-10-01 18:13:45
-				DPRINT("spooling finished, next spool time: %ld (%s)", next_spool_time, timebuf);
-#endif
+				DPRINT("spooling finished, next spool time: %ld (%s)", next_spool_time, strtime(&(struct timeval){next_spool_time, 0}));
 			}
 		}
 
