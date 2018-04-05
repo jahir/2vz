@@ -9,6 +9,12 @@ interval 5
 
 device /dev/input/by-id/usb-Logitech_USB_Optical_Mouse-event-mouse
 
+# S0 impulses are usually about 20..30ms long (at least with my meters). as we know that a release event will follow
+# shortly after a press event, we just wait some time before doing a read, so both events can be read at once
+# (together with their corresponding SYN events).
+# with a sampling intervall of 8ms, this will be 32ms, which we round up a bit.
+read_wait 40
+
 # standard S0 device for a single tariff
 #button <button> <name> <uuid> <value>
 button M Haushalt xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx 1.25

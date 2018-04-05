@@ -76,6 +76,7 @@ struct config_t {
 	char * spool;
 	char * dev;
 	int interval;
+	struct timespec read_wait;
 	struct channel * chan;
 };
 
@@ -172,6 +173,7 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 	const char * CONF_SEP = " \r\n";
 
 	memset(conf, 0, sizeof(*conf));
+
 	FILE * fh = fopen(conffile, "r");
 	if (!fh) {
 		mylog("open config '%s' failed: %m", conffile);
@@ -200,11 +202,23 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 			if (CONFIG_ELEM(c, p) && *p != '\0') {
 				conf->interval = strtol(p, &endptr, 10);
 				if (*endptr == '\0')
-					DPRINT("line %d: spool interval %ds", lines, conf->interval);
+					DPRINT("line %d: spool interval %d s", lines, conf->interval);
 				else
 					mylog("config error in line %d (interval)", lines);
 			} else
-				mylog("config error in line %d (spool)", lines);
+				mylog("config error in line %d (interval)", lines);
+		} else if (!strcmp(c, "read_wait")) {
+			char *p, *endptr;
+			if (CONFIG_ELEM(c, p) && *p != '\0') {
+				long ms = strtol(p, &endptr, 10);
+				if (*endptr == '\0') {
+					DPRINT("line %d: read wait time %ld ms", lines, ms);
+					conf->read_wait.tv_nsec = ms * 1000 * 1000; // ms to ns
+				}
+				else
+					mylog("config error in line %d (read_wait)", lines);
+			} else
+				mylog("config error in line %d (read_wait)", lines);
 		} else if (!strcmp(c, "device")) {
 			if (CONFIG_ELEM(c, conf->dev))
 				DPRINT("line %d: device path '%s'", lines, conf->dev);
@@ -419,20 +433,22 @@ int main(int argc, char* argv[])
 			}
 		}
 
-		while (ready > 0) { // read loop 
-			struct input_event evs[6]; // mouse input events usually come in packets of 3 (EV_MSC+EV_KEY+EV_SYN), we read a multiple of it
+		if (ready > 0) { // something to read?
+			if (conf.read_wait.tv_nsec > 0)
+				nanosleep(&conf.read_wait, NULL);
+			struct input_event evs[16]; // mouse input events usually come in packets of 2 (EV_MSC+EV_KEY+EV_SYN), we read a multiple of it
 			ssize_t rc = read(dev_fd, evs, sizeof(evs));
 			if (rc == 0) {
 				mylog("read: EOF??");
 				reopen_device();
-				break;
+				continue;
 			} else if (rc < 0) {
 				if (errno != EAGAIN) {
 					mylog("read error: %m");
 					reopen_device();
 				} else
 					DPRINT("read EAGAIN");
-				break;
+				continue;
 			}
 
 			// for reference, struct input_event for mouse events:
