@@ -16,7 +16,7 @@
 #include "ev2vzs_ts.h"
 
 #define PROG "ev2vzs"
-#define VER "0.5.2"
+#define VER "0.5.3"
 // /path/to/spool/timestamp_uuid_value
 #define VZ_SPOOLFMT "%s%llu_%s_%g"
 
@@ -33,6 +33,12 @@
 
 typedef unsigned long long TSMS;
 #define CALC_TSMS(tv) ((TSMS) tv.tv_sec * 1000 + tv.tv_usec / 1000)
+
+// input event api works with bitfields, so we use some handy macros
+// number of qwords (64bit) necessray to store the given number of bits
+#define bits64(n)     (((n) + 64 - 1)>>6)
+// check if bit n is set in (u)int64 array p
+#define bit_get(p, n) (!!(p[(n)>>6] & (1u << ((n)&63))))
 
 // config /////////////////////////
 
@@ -234,17 +240,13 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 
 //////////////////////////////////
 
-#define bytes_for_bits(n) ((n>>3) + (!!(n&7) << 2))
-#define button_set(p, n) p[n>>3] |= 1u << (n&7)
-#define button_pressed(p, n) !!(p[n>>3] & (1u << (n&7)))
-
 void update_tariff_states() {
-	uint8_t keys[bytes_for_bits(KEY_CNT)];
+	uint64_t keys[bits64(KEY_CNT)];
 	memset(keys, 0, sizeof(keys));
 	ioctl(dev_fd, EVIOCGKEY(sizeof(keys)), keys);
 	for (struct channel *ch=conf.chan; ch; ch=ch->next)
 		if (ch->btn_trf) {
-			ch->act = button_pressed(keys, ch->btn_trf->code);
+			ch->act = bit_get(keys, ch->btn_trf->code);
 			DPRINT("button %s (used for channels %s/%s) state: %d", ch->btn_trf->name, ch->peak.name, ch->offpeak.name, ch->act);
 		}
 }
@@ -266,12 +268,14 @@ void reopen_device() {
 		sleep(5);
 	}
 	mylog("opened %s", dev_path);
-	{ // set event mask. masking EV_SYN is no good (will filter all events), so only EV_MSC will do
-		uint8_t codes[MSC_CNT]; // don't know why bytes_for_bits() does not work here
+	{ // set event masks to filter out events we don't need. masking EV_SYN will filter all events, so only EV_MSC is filtered for now
+		uint64_t codes[bits64(MSC_CNT)];
 		memset(codes, 0, sizeof(codes));
 		struct input_mask mask = { EV_MSC, sizeof(codes), (uint64_t)codes };
 		if (ioctl(dev_fd, EVIOCSMASK, &mask) < 0)
 			mylog("warning: failed to set EV_MSC event mask (%d) (%m)", mask.codes_size);
+		else
+			DPRINT("set input mask for EV_MSC");
 	}
 
 	int version;
