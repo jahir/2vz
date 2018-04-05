@@ -1,13 +1,19 @@
-CFLAGS+=-O2 -g -Wall -std=gnu99
+CFLAGS+=-O2 -g -Wall -Werror -std=gnu99
 
 all: ev2vzs
 
 ev2vzs: ev2vzs.c
 	date +'#define SOURCE_TS "%F %T"' -d @$$(stat -L -c %Y $<) > ev2vzs_ts.h
 	date +'#define COMPILE_TS "%F %T"' >> ev2vzs_ts.h
-	gcc -o $@ $(CFLAGS) -Werror $<
+	$(CC) -o $@ $(CFLAGS) $<
 
-.PHONY: clean install
+debug: ev2vzs.c
+	CFLAGS+=-DDEBUG
+	date +'#define SOURCE_TS "%F %T"' -d @$$(stat -L -c %Y $<) > ev2vzs_ts.h
+	date +'#define COMPILE_TS "%F %T"' >> ev2vzs_ts.h
+	$(CC) -o $(basename $<) $(CFLAGS) -DDEBUG $<
+
+.PHONY: clean install setdebug debug
 
 clean: 
 	rm -f -- ev2vzs
