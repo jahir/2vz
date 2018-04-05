@@ -16,7 +16,7 @@
 #include "ev2vzs_ts.h"
 
 #define PROG "ev2vzs"
-#define VER "0.5.3"
+#define VER "0.5.4"
 // /path/to/spool/timestamp_uuid_value
 #define VZ_SPOOLFMT "%s%llu_%s_%g"
 
@@ -353,7 +353,8 @@ int main(int argc, char* argv[])
 	time_t next_spool_time = 0;
 	if (conf.interval > 0)
 		next_spool_time = time(NULL) / conf.interval * conf.interval + conf.interval;
-	int ready = 1;
+	int ready = (conf.interval == 0); // poll result. pre-set to 1 if spool interval is not set
+	int spool = 0; // do we have events to send to spool?
 	while (1) {
 		if (conf.interval > 0) {
 			// calculate next interval
@@ -361,37 +362,42 @@ int main(int argc, char* argv[])
 			struct pollfd fds[1] = { {dev_fd, POLLIN, 0} };
 			int timeout;
 			if (gettimeofday(&tv, NULL) != 0) {
-				mylog("WARNING: gettimeofday error: %m");
+				mylog("WARNING! gettimeofday: %m");
 				tv.tv_sec = time(NULL);
 				if (tv.tv_sec == -1)
 					tv.tv_sec = next_spool_time - 1;
 				tv.tv_usec = 500000; //
 			}
-			if (tv.tv_sec < next_spool_time) {
-				// timeout = (next_spool_time - tv.tv_sec) << 10 - (tv.tv_usec >> 10); // max err: 144 ms 
-				timeout = (next_spool_time - tv.tv_sec) * 1000 - tv.tv_usec / 1000; // exact timeout
-				DPRINT("waiting for event, timeout %dms", timeout);
-				ready = poll(fds, 1, timeout);
-				if (ready < 0)
-					mylog("poll error: %m");
-				tv.tv_sec = time(NULL);
-			} else {
-				ready = 0;
-			}
-			if (tv.tv_sec >= next_spool_time) { // hammertime!
-				DPRINT("interval ended, spooling now");
-				for (struct channel * ch = conf.chan; ch; ch=ch->next) {
-					struct tariff * trf  = &ch->peak;
-					if (trf->cnt > 0) {
-						DPRINT("spooled channel %s UUID %s ts %lld cnt %d", trf->name, trf->uuid, trf->ts, trf->cnt);
-						vzspool(trf->ts, trf->uuid, ch->val * trf->cnt);
-						trf->cnt = 0;
-					}
-					trf = &ch->offpeak;
-					if (trf->cnt > 0) {
-						DPRINT("spooled offpeak channel %s UUID %s ts %lld cnt %d", trf->name, trf->uuid, trf->ts, trf->cnt);
-						vzspool(trf->ts, trf->uuid, ch->val * trf->cnt);
-						trf->cnt = 0;
+			if (spool) {
+				if (tv.tv_sec < next_spool_time)
+					timeout = (next_spool_time - tv.tv_sec) * 1000 - tv.tv_usec / 1000;
+				else
+					timeout = 0; // poll events, but return immediately
+			} else
+				timeout = -1; // nothing to spool, so just wait for the next event
+			DPRINT("waiting for event, timeout %dms", timeout);
+			ready = poll(fds, 1, timeout);
+			if (ready < 0)
+				mylog("ERROR! poll: %m");
+
+			// send stored events to spool? timeout >= 0 means there is something to spool (set above)
+			if (timeout == 0 || (tv.tv_sec = time(NULL)) >= next_spool_time) { // hammertime!
+				DPRINT("interval ended, spooling now (%d events)", spool);
+				if (spool) {
+					spool = 0;
+					for (struct channel * ch = conf.chan; ch; ch=ch->next) {
+						struct tariff * trf  = &ch->peak;
+						if (trf->cnt > 0) {
+							DPRINT("spooled channel %s UUID %s ts %lld cnt %d", trf->name, trf->uuid, trf->ts, trf->cnt);
+							vzspool(trf->ts, trf->uuid, ch->val * trf->cnt);
+							trf->cnt = 0;
+						}
+						trf = &ch->offpeak;
+						if (trf->cnt > 0) {
+							DPRINT("spooled offpeak channel %s UUID %s ts %lld cnt %d", trf->name, trf->uuid, trf->ts, trf->cnt);
+							vzspool(trf->ts, trf->uuid, ch->val * trf->cnt);
+							trf->cnt = 0;
+						}
 					}
 				}
 				while (next_spool_time <= tv.tv_sec)
@@ -461,9 +467,10 @@ int main(int argc, char* argv[])
 						}
 						trf->ts = tsms;
 
-						if (conf.interval > 0)
+						if (conf.interval > 0) {
 							++(trf->cnt);
-						else
+							++spool;
+						} else
 							vzspool(tsms, trf->uuid, ch->val);
 						break;
 					} // impulse
