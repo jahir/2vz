@@ -396,10 +396,11 @@ int main(int argc, char* argv[])
 	time_t next_spool_time = 0;
 	if (conf.interval > 0)
 		next_spool_time = time(NULL) / conf.interval * conf.interval + conf.interval;
-	int ready = (conf.interval == 0); // poll result. pre-set to 1 if spool interval is not set
+	int ready = (conf.interval == 0); // poll result. set to fixed value 1 if spool interval is not set
 	int spool = 0; // do we have events to send to spool?
 	while (1) {
-		if (conf.interval > 0) {
+		if (conf.interval > 0) 
+		do {
 			// calculate next interval
 			struct timeval tv = {0, 0};
 			struct pollfd fds[1] = { {dev_fd, POLLIN, 0} };
@@ -434,77 +435,75 @@ int main(int argc, char* argv[])
 					next_spool_time += conf.interval;
 				DPRINT("spooling finished, next spool time: %ld (%s)", next_spool_time, strtime(&(struct timeval){next_spool_time, 0}));
 			}
+		} while (ready <= 0);
+
+		if (conf.read_wait.tv_nsec > 0)
+			nanosleep(&conf.read_wait, NULL);
+		struct input_event evs[16]; // mouse input events usually come in packets of 2 (EV_MSC+EV_KEY+EV_SYN), we read a multiple of it
+		ssize_t rc = read(dev_fd, evs, sizeof(evs));
+		if (rc == 0) {
+			mylog("read: EOF??");
+			reopen_device();
+			continue;
+		} else if (rc < 0) {
+			if (errno != EAGAIN) {
+				mylog("read error: %m");
+				reopen_device();
+			} else
+				DPRINT("read EAGAIN");
+			continue;
 		}
 
-		if (ready > 0) { // something to read?
-			if (conf.read_wait.tv_nsec > 0)
-				nanosleep(&conf.read_wait, NULL);
-			struct input_event evs[16]; // mouse input events usually come in packets of 2 (EV_MSC+EV_KEY+EV_SYN), we read a multiple of it
-			ssize_t rc = read(dev_fd, evs, sizeof(evs));
-			if (rc == 0) {
-				mylog("read: EOF??");
-				reopen_device();
+		// for reference, struct input_event for mouse events:
+		// type: EV_SYN EV_KEY EV_MSC
+		// with type==EV_KEY:
+		// code: BTN_LEFT BTN_RIGHT BTN_MIDDLE ...
+		// value: 0 => released, 1 => pressed (and 2 => autorepeat)
+
+		int cnt = rc / sizeof(evs[0]);
+		for (int i=0; i<cnt; ++i) {
+			struct input_event *ev = &evs[i];
+			if (ev->type != EV_KEY) { // mouse button event?
+				DPRINT("ignoring event type %d (code 0x%x value 0x%x)", ev->type, ev->code, ev->value);
 				continue;
-			} else if (rc < 0) {
-				if (errno != EAGAIN) {
-					mylog("read error: %m");
-					reopen_device();
-				} else
-					DPRINT("read EAGAIN");
-				continue;
-			}
+			} else
+				DPRINT("handling event type %d (code 0x%x value 0x%x)", ev->type, ev->code, ev->value);
 
-			// for reference, struct input_event for mouse events:
-			// type: EV_SYN EV_KEY EV_MSC
-			// with type==EV_KEY:
-			// code: BTN_LEFT BTN_RIGHT BTN_MIDDLE ...
-			// value: 0 => released, 1 => pressed (and 2 => autorepeat)
+			for (struct channel * ch = conf.chan; ch; ch=ch->next) {
+				if (ch->btn_trf && ch->btn_trf->code == ev->code) { // tariff button changed? then switch tariff
+					if (ch->act != ev->value) {
+						ch->act = (ev->value != 0); // normalize to 0 and 1
+						struct tariff * trf_cur = &ch->trf[ch->act];
+						struct tariff * trf_oth = &ch->trf[!ch->act];
+						mylog("tariff switch: %s -> %s", trf_oth->name, trf_cur->name);
+						if (trf_oth->ts)
+							vzspool(trf_oth->ts, trf_cur->uuid, 0.0); // send 0-val with last timestamp of previous tariff for _current_ tariff
+						vzspool(CALC_TSMS(ev->time), trf_oth->uuid, 0.0); // send 0-val with current timestamp for _previous_ tariff
+					} else
+						mylog("Warning: tariff button %s event (%d) without state change", ch->btn_trf->name, ev->value);
+					break;
+				} // tariff button
+				if (ev->value == 1 && ch->btn_imp && ch->btn_imp->code == ev->code) { // impulse for channel
+					struct tariff * trf = &ch->trf[ch->act];
+					TSMS tsms = (TSMS) ev->time.tv_sec * 1000 + ev->time.tv_usec / 1000;
+					if (trf->ts) {
+						TSMS tdiff = tsms - trf->ts;
+						double power = (3600.0 * 1000) * ch->val / tdiff;
+						mylog_ts(&ev->time, "%-13s: P = %7.1f W  (delta_t = %6llu ms)", trf->name, power, tdiff);
+					} else {
+						mylog_ts(&ev->time, "%-13s: first impulse", trf->name);
+					}
+					trf->ts = tsms;
 
-			int cnt = rc / sizeof(evs[0]);
-			for (int i=0; i<cnt; ++i) {
-				struct input_event *ev = &evs[i];
-				if (ev->type != EV_KEY) { // mouse button event?
-					DPRINT("ignoring event type %d (code 0x%x value 0x%x)", ev->type, ev->code, ev->value);
-					continue;
-				} else
-					DPRINT("handling event type %d (code 0x%x value 0x%x)", ev->type, ev->code, ev->value);
-
-				for (struct channel * ch = conf.chan; ch; ch=ch->next) {
-					if (ch->btn_trf && ch->btn_trf->code == ev->code) { // tariff button changed? then switch tariff
-						if (ch->act != ev->value) {
-							ch->act = (ev->value != 0); // normalize to 0 and 1
-							struct tariff * trf_cur = &ch->trf[ch->act];
-							struct tariff * trf_oth = &ch->trf[!ch->act];
-							mylog("tariff switch: %s -> %s", trf_oth->name, trf_cur->name);
-							if (trf_oth->ts)
-								vzspool(trf_oth->ts, trf_cur->uuid, 0.0); // send 0-val with last timestamp of previous tariff for _current_ tariff
-							vzspool(CALC_TSMS(ev->time), trf_oth->uuid, 0.0); // send 0-val with current timestamp for _previous_ tariff
-						} else
-							mylog("Warning: tariff button %s event (%d) without state change", ch->btn_trf->name, ev->value);
-						break;
-					} // tariff button
-					if (ev->value == 1 && ch->btn_imp && ch->btn_imp->code == ev->code) { // impulse for channel
-						struct tariff * trf = &ch->trf[ch->act];
-						TSMS tsms = (TSMS) ev->time.tv_sec * 1000 + ev->time.tv_usec / 1000;
-						if (trf->ts) {
-							TSMS tdiff = tsms - trf->ts;
-							double power = (3600.0 * 1000) * ch->val / tdiff;
-							mylog_ts(&ev->time, "%-13s: P = %7.1f W  (delta_t = %6llu ms)", trf->name, power, tdiff);
-						} else {
-							mylog_ts(&ev->time, "%-13s: first impulse", trf->name);
-						}
-						trf->ts = tsms;
-
-						if (conf.interval > 0) {
-							++(trf->cnt);
-							++spool;
-						} else
-							vzspool(tsms, trf->uuid, ch->val);
-						break;
-					} // impulse
-				} // find channel for button
-			} // loop over events
-		} // while ready and something was read
+					if (conf.interval > 0) {
+						++(trf->cnt);
+						++spool;
+					} else
+						vzspool(tsms, trf->uuid, ch->val);
+					break;
+				} // impulse
+			} // find channel for button
+		} // loop over events
 	} // loop forever
 } // main
 
