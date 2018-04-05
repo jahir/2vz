@@ -24,7 +24,7 @@
 #define DEBUG
 #endif
 #ifdef DEBUG
-#define DPRINT(format, args...) mylog("%s: "format, __FUNCTION__, ##args)
+#define DPRINT(format, args...) mylog("{%s} "format, __FUNCTION__, ##args)
 #define DUMP(pre, buf, len) dump(pre, buf, len)
 #else
 #define DPRINT(format, args...) do { /* nothing */ } while (0)
@@ -346,6 +346,22 @@ void vzspool(TSMS tsms, const char * uuid, const double val) {
 	}
 }
 
+void dequeue() {
+	for (struct channel * ch = conf.chan; ch; ch=ch->next) {
+		struct tariff * trf  = &ch->peak;
+		if (trf->cnt > 0) {
+			DPRINT("spooled channel %s UUID %s ts %lld cnt %d", trf->name, trf->uuid, trf->ts, trf->cnt);
+			vzspool(trf->ts, trf->uuid, ch->val * trf->cnt);
+			trf->cnt = 0;
+		}
+		trf = &ch->offpeak;
+		if (trf->cnt > 0) {
+			DPRINT("spooled offpeak channel %s UUID %s ts %lld cnt %d", trf->name, trf->uuid, trf->ts, trf->cnt);
+			vzspool(trf->ts, trf->uuid, ch->val * trf->cnt);
+			trf->cnt = 0;
+		}
+	}
+}
 
 int main(int argc, char* argv[])
 {
@@ -412,20 +428,7 @@ int main(int argc, char* argv[])
 				DPRINT("spool time reached, %d events queued", spool);
 				if (spool) {
 					spool = 0;
-					for (struct channel * ch = conf.chan; ch; ch=ch->next) {
-						struct tariff * trf  = &ch->peak;
-						if (trf->cnt > 0) {
-							DPRINT("spooled channel %s UUID %s ts %lld cnt %d", trf->name, trf->uuid, trf->ts, trf->cnt);
-							vzspool(trf->ts, trf->uuid, ch->val * trf->cnt);
-							trf->cnt = 0;
-						}
-						trf = &ch->offpeak;
-						if (trf->cnt > 0) {
-							DPRINT("spooled offpeak channel %s UUID %s ts %lld cnt %d", trf->name, trf->uuid, trf->ts, trf->cnt);
-							vzspool(trf->ts, trf->uuid, ch->val * trf->cnt);
-							trf->cnt = 0;
-						}
-					}
+					dequeue();
 				}
 				while (next_spool_time <= tv.tv_sec)
 					next_spool_time += conf.interval;
