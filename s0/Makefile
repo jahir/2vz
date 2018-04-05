@@ -1,4 +1,4 @@
-CFLAGS=-O2 -g -Wall -std=gnu99
+CFLAGS+=-O2 -g -Wall -std=gnu99
 
 all: ev2vzs
 
