@@ -388,14 +388,14 @@ int main(int argc, char* argv[])
 					timeout = 0; // poll events, but return immediately
 			} else
 				timeout = -1; // nothing to spool, so just wait for the next event
-			DPRINT("waiting for event, timeout %dms", timeout);
+			DPRINT("waiting for event, timeout %d ms", timeout);
 			ready = poll(fds, 1, timeout);
 			if (ready < 0)
 				mylog("ERROR! poll: %m");
 
 			// send stored events to spool? timeout >= 0 means there is something to spool (set above)
 			if (timeout == 0 || (tv.tv_sec = time(NULL)) >= next_spool_time) { // hammertime!
-				DPRINT("interval ended, spooling now (%d events)", spool);
+				DPRINT("spool time reached, %d events queued", spool);
 				if (spool) {
 					spool = 0;
 					for (struct channel * ch = conf.chan; ch; ch=ch->next) {
@@ -469,8 +469,8 @@ int main(int argc, char* argv[])
 						TSMS tsms = (TSMS) ev->time.tv_sec * 1000 + ev->time.tv_usec / 1000;
 						if (trf->ts) {
 							TSMS tdiff = tsms - trf->ts;
-							double p = (3600.0 * 1000) * ch->val / tdiff;
-							mylog_ts(&ev->time, "%-13s: tdiff %6llu ms   P %8.3f W", trf->name, tdiff, p);
+							double power = (3600.0 * 1000) * ch->val / tdiff;
+							mylog_ts(&ev->time, "%-13s: P = %7.1f W  (delta_t = %6llu ms)", trf->name, power, tdiff);
 						} else {
 							mylog_ts(&ev->time, "%-13s: first impulse", trf->name);
 						}
