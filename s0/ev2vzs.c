@@ -490,7 +490,7 @@ int main(int argc, char* argv[])
 			if (ch) { // channel set for button?
 				if (ev->value == 1 && ch->btn_imp && ch->btn_imp->code == ev->code) { // impulse for channel
 					struct tariff * trf = &ch->trf[ch->act];
-					TSMS tsms = (TSMS) ev->time.tv_sec * 1000 + ev->time.tv_usec / 1000;
+					TSMS tsms = CALC_TSMS(ev->time);
 					if (trf->ts) {
 						TSMS tdiff = tsms - trf->ts;
 						double power = (3600.0 * 1000) * ch->val / tdiff;
