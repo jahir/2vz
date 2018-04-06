@@ -16,7 +16,7 @@
 #include "ev2vzs_ts.h"
 
 #define PROG "ev2vzs"
-#define VER "0.5.5"
+#define VER "0.5.6"
 // /path/to/spool/timestamp_uuid_value
 #define VZ_SPOOLFMT "%s%llu_%s_%g"
 
