@@ -71,6 +71,9 @@ struct channel {
 	struct channel * next;
 };
 
+// map button to channel
+struct channel * b2c[KEY_CNT];
+
 struct config_t {
 	char * log;
 	char * spool;
@@ -173,6 +176,7 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 	const char * CONF_SEP = " \r\n";
 
 	memset(conf, 0, sizeof(*conf));
+	memset(b2c, 0, sizeof(b2c));
 
 	FILE * fh = fopen(conffile, "r");
 	if (!fh) {
@@ -226,17 +230,24 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 				mylog("config error in line %d (dev)", lines);
 		} else if (!strcmp(c, "button")) {
 			struct channel * ch = myalloc(sizeof(struct channel));
-			char *button, *val;
-			if (CONFIG_ELEM_PTR(c, button) && find_button(button, &ch->btn_imp) &&
+			char *bnam, *val;
+			struct button *b;
+			if (CONFIG_ELEM_PTR(c, bnam) && find_button(bnam, &b) &&
 			    CONFIG_ELEM(c, ch->peak.name) && CONFIG_ELEM(c, ch->peak.uuid) &&
 			    CONFIG_ELEM_PTR(c, val) && (ch->val = atof(val)))
 			{
-				DPRINT("line %d: button %s (0x%03hx) name %s uuid %s val %g", lines, button, ch->btn_imp->code, ch->peak.name, ch->peak.uuid, ch->val);
+				DPRINT("line %d: button %s (0x%03hx) name %s uuid %s val %g", lines, bnam, b->code, ch->peak.name, ch->peak.uuid, ch->val);
 				++chans;
-				*ch0 = ch;
-				ch0 = &ch->next;
-				if (CONFIG_ELEM_PTR(c, button)) { // off-peak tariff given, get tariff switch button
-					if (find_button(button, &ch->btn_trf) &&
+				*ch0 = ch; // save ch in current ch0 (which is conf.ch or the previous ch->next) ...
+				ch0 = &ch->next; // and let ch0 point to the next pointer (for the next channel)
+				ch->btn_imp = b;
+				if (b2c[b->code]) {
+					mylog("ERROR! channel %s impulse button %s is already used by channel %s", ch->peak.name, bnam, b2c[b->code]->peak.name);
+					return NULL;
+				}
+				b2c[b->code] = ch;
+				if (CONFIG_ELEM_PTR(c, bnam)) { // off-peak tariff given, get tariff switch button
+					if (find_button(bnam, &b) &&
 					    CONFIG_ELEM(c, ch->offpeak.name) && CONFIG_ELEM(c, ch->offpeak.uuid))
 					{
 						/*if (b->channel) {
@@ -248,7 +259,13 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 								lines, button, ch->offpeak.code, ch->offpeak.name, ch->offpeak.uuid);
 						}*/
 						DPRINT("line %d:   off-peak button %s (0x%03hx) name %s uuid %s", 
-							lines, button, ch->btn_trf->code, ch->offpeak.name, ch->offpeak.uuid);
+							lines, bnam, b->code, ch->offpeak.name, ch->offpeak.uuid);
+						ch->btn_trf = b;
+						if (b2c[b->code]) {
+							mylog("ERROR! channel %s tariff button %s is already used by channel %s", ch->peak.name, bnam, b2c[b->code]->peak.name);
+							return NULL;
+						}
+						b2c[b->code] = ch;
 					} else {
 						mylog("config error in line %d (button off-peak)", lines);
 					}
@@ -464,25 +481,13 @@ int main(int argc, char* argv[])
 		for (int i=0; i<cnt; ++i) {
 			struct input_event *ev = &evs[i];
 			if (ev->type != EV_KEY) { // mouse button event?
-				DPRINT("ignoring event type %d (code 0x%x value 0x%x)", ev->type, ev->code, ev->value);
+				DPRINT("ignoring event type %d (code 0x%03x value %d)", ev->type, ev->code, ev->value);
 				continue;
 			} else
-				DPRINT("handling event type %d (code 0x%x value 0x%x)", ev->type, ev->code, ev->value);
+				DPRINT("handling event type %d (code 0x%03x value %d)", ev->type, ev->code, ev->value);
 
-			for (struct channel * ch = conf.chan; ch; ch=ch->next) {
-				if (ch->btn_trf && ch->btn_trf->code == ev->code) { // tariff button changed? then switch tariff
-					if (ch->act != ev->value) {
-						ch->act = (ev->value != 0); // normalize to 0 and 1
-						struct tariff * trf_cur = &ch->trf[ch->act];
-						struct tariff * trf_oth = &ch->trf[!ch->act];
-						mylog("tariff switch: %s -> %s", trf_oth->name, trf_cur->name);
-						if (trf_oth->ts)
-							vzspool(trf_oth->ts, trf_cur->uuid, 0.0); // send 0-val with last timestamp of previous tariff for _current_ tariff
-						vzspool(CALC_TSMS(ev->time), trf_oth->uuid, 0.0); // send 0-val with current timestamp for _previous_ tariff
-					} else
-						mylog("Warning: tariff button %s event (%d) without state change", ch->btn_trf->name, ev->value);
-					break;
-				} // tariff button
+			struct channel * ch = b2c[ev->code];
+			if (ch) { // channel set for button?
 				if (ev->value == 1 && ch->btn_imp && ch->btn_imp->code == ev->code) { // impulse for channel
 					struct tariff * trf = &ch->trf[ch->act];
 					TSMS tsms = (TSMS) ev->time.tv_sec * 1000 + ev->time.tv_usec / 1000;
@@ -500,10 +505,24 @@ int main(int argc, char* argv[])
 						++spool;
 					} else
 						vzspool(tsms, trf->uuid, ch->val);
-					break;
-				} // impulse
-			} // find channel for button
-		} // loop over events
+				} // s0 impulse button
+				else if (ch->btn_trf && ev->code == ch->btn_trf->code) { // tariff button
+					if (ev->value != 0 && ev->value != 1) {
+						mylog("Warning: ignoring unknown value %d for button %s", ev->value, ch->btn_trf->name);
+					} else if (ch->act != ev->value) {
+						ch->act = ev->value;
+						struct tariff * trf_cur = &ch->trf[ch->act];
+						struct tariff * trf_oth = &ch->trf[!ch->act];
+						mylog("tariff switch: %s -> %s", trf_oth->name, trf_cur->name);
+						if (trf_oth->ts)
+							vzspool(trf_oth->ts, trf_cur->uuid, 0.0); // send 0-val with last timestamp of previous tariff for _current_ tariff
+						vzspool(CALC_TSMS(ev->time), trf_oth->uuid, 0.0); // send 0-val with current timestamp for _previous_ tariff
+					} else {
+						mylog("Warning: tariff button %s event (%d) without state change", ch->btn_trf->name, ev->value);
+					}
+				} // tariff button
+			} // button channel
+		} // loop over read events
 	} // loop forever
 } // main
 
