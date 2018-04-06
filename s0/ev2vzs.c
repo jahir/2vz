@@ -94,11 +94,10 @@ int dev_fd = -1;
 const char * strtime(struct timeval * tvp) {
 	static char buf[24]; // strlen + \0
 	if (strftime(buf, sizeof(buf), "%F %T.", localtime(&tvp->tv_sec)) > 0) {
-        div_t dm = 
-		 div(tvp->tv_usec, 1000000);
-        dm = div(dm.rem,    100000); buf[20] = '0' + dm.quot;
-        dm = div(dm.rem,     10000); buf[21] = '0' + dm.quot;
-        dm = div(dm.rem,      1000); buf[22] = '0' + dm.quot;
+		int rem =             tvp->tv_usec % 1000000;
+		buf[20] = '0' + rem /  100000; rem %= 100000;
+		buf[21] = '0' + rem /   10000; rem %=  10000;
+		buf[22] = '0' + rem /    1000;
 		buf[23] = '\0';
 	} else // fall back to unix timestamp
 		snprintf(buf, sizeof(buf), "%10ld.%06ld", tvp->tv_sec, tvp->tv_usec);
