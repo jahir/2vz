@@ -105,19 +105,14 @@ const char * strtime(struct timeval * tvp) {
 }
 
 void mylog_ll(struct timeval * tvp, char *fmt, va_list ap) {
+	FILE* fh = stderr;
 	char logbuf[256];
 	vsnprintf(logbuf, sizeof(logbuf), fmt, ap);
-	if (conf.log) {
-		FILE* fh = fopen(conf.log, "a");
-		if (fh) {
-			fprintf(fh, "%s %s[%d] %s\n", strtime(tvp), PROG, getpid(), logbuf);
-			fclose(fh);
-		} else {
-			perror("mylog fopen");
-		}
-	} else { // fallback to stderr output
-		fprintf(stderr, "%s\n", logbuf);
-	}
+	if (conf.log && !(fh = fopen(conf.log, "a")))
+		perror("mylog fopen");
+	fprintf(fh, "%s %s[%d] %s\n", strtime(tvp), PROG, getpid(), logbuf);
+	if (fh != stderr)
+		fclose(fh);
 }
 
 void mylog_ts(struct timeval * tvp, char *fmt, ...) __attribute__ ((format (printf, 2, 3)));
@@ -294,7 +289,7 @@ void update_tariff_states() {
 	for (struct channel *ch=conf.chan; ch; ch=ch->next)
 		if (ch->btn_trf) {
 			ch->act = bit_get(keys, ch->btn_trf->code);
-			DPRINT("button %s (used for channels %s/%s) state: %d", ch->btn_trf->name, ch->peak.name, ch->offpeak.name, ch->act);
+			mylog("button %s has value %d, set active tariff to %s (other: %s)", ch->btn_trf->name, ch->act, ch->trf[ch->act].name, ch->trf[!ch->act].name);
 		}
 }
 
