@@ -16,7 +16,7 @@
 #include "ev2vzs_ts.h"
 
 #define PROG "ev2vzs"
-#define VER "0.5.6"
+#define VER "0.5.7"
 // /path/to/spool/timestamp_uuid_value
 #define VZ_SPOOLFMT "%s%llu_%s_%g"
 
@@ -91,7 +91,7 @@ int dev_fd = -1;
 /*** logging and signal handling *************************************************/
 
 // returns a readable timestamp "YYYY-mm-dd HH:MM:SS.sss" from tvp
-const char * strtime(struct timeval * tvp) {
+static const char * strtime(struct timeval * tvp) {
 	static char buf[24]; // strlen + \0
 	if (strftime(buf, sizeof(buf), "%F %T.", localtime(&tvp->tv_sec)) > 0) {
 		uint16_t rem = tvp->tv_usec / 1000 % 1000;
@@ -104,7 +104,7 @@ const char * strtime(struct timeval * tvp) {
 	return buf;
 }
 
-void mylog_ll(struct timeval * tvp, char *fmt, va_list ap) {
+static void mylog_ll(struct timeval * tvp, char *fmt, va_list ap) {
 	FILE* fh = stderr;
 	char logbuf[256];
 	vsnprintf(logbuf, sizeof(logbuf), fmt, ap);
@@ -115,8 +115,8 @@ void mylog_ll(struct timeval * tvp, char *fmt, va_list ap) {
 		fclose(fh);
 }
 
-void mylog_ts(struct timeval * tvp, char *fmt, ...) __attribute__ ((format (printf, 2, 3)));
-void mylog_ts(struct timeval * tvp, char *fmt, ...) {
+static void mylog_ts(struct timeval * tvp, char *fmt, ...) __attribute__ ((format (printf, 2, 3)));
+static void mylog_ts(struct timeval * tvp, char *fmt, ...) {
 	va_list ap;
 
 	va_start(ap, fmt);
@@ -124,8 +124,8 @@ void mylog_ts(struct timeval * tvp, char *fmt, ...) {
 	va_end(ap);
 }
 
-void mylog(char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
-void mylog(char *fmt, ...) {
+static void mylog(char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
+static void mylog(char *fmt, ...) {
 	va_list ap;
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
@@ -134,7 +134,7 @@ void mylog(char *fmt, ...) {
 	va_end(ap);
 }
 
-void handle_sig(int signum) {
+static void handle_sig(int signum) {
 	if (signum == SIGHUP) {
 		mylog("reload on SIGHUP is not implemented yet");
 	} else {
@@ -146,7 +146,7 @@ void handle_sig(int signum) {
 /*** config reading **************************************************************/
 
 // safely allocate memory and initialize it. exit programm if it fails!
-void * myalloc(size_t size) {
+static void * myalloc(size_t size) {
 	void * p = calloc(1, size);
 	if (p)
 		return p;
@@ -154,7 +154,7 @@ void * myalloc(size_t size) {
 	exit(EXIT_FAILURE);
 }
 
-int find_button(char * name, struct button ** btn) {
+static int find_button(char * name, struct button ** btn) {
 	for (struct button * b=buttons; b->code>0; ++b)
 		if (strcmp(name, b->name) == 0) {
 			if (btn != NULL)
@@ -166,7 +166,7 @@ int find_button(char * name, struct button ** btn) {
 
 #define CONFIG_ELEM(c,dest) ((c=strtok(NULL,CONF_SEP)) && (dest=strdup(c)))
 #define CONFIG_ELEM_PTR(c,dest) ((c=dest=strtok(NULL,CONF_SEP)))
-struct config_t * read_config(char * conffile, struct config_t * conf) {
+static struct config_t * read_config(char * conffile, struct config_t * conf) {
 	const char * CONF_SEP = " \r\n";
 
 	memset(conf, 0, sizeof(*conf));
@@ -278,7 +278,7 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 
 //////////////////////////////////
 
-void update_tariff_states() {
+static void update_tariff_states() {
 	uint64_t keys[bits64(KEY_CNT)];
 	memset(keys, 0, sizeof(keys));
 	int rc = ioctl(dev_fd, EVIOCGKEY(sizeof(keys)), keys);
@@ -293,7 +293,7 @@ void update_tariff_states() {
 		}
 }
 
-void reopen_device() {
+static void reopen_device() {
 	char * dev_path = conf.dev;
 	if (dev_fd >= 0) {
 		mylog("device already open, closing");
@@ -341,15 +341,7 @@ void reopen_device() {
 	update_tariff_states();
 }
 
-
-double tv_diff(struct timeval * tv1, struct timeval * tv2) {
-	if (tv1->tv_usec < tv2->tv_usec)
-		return (tv2->tv_sec - tv1->tv_sec) + (tv2->tv_usec - tv1->tv_usec)/1e6;
-	else
-		return (tv2->tv_sec - tv1->tv_sec) - (tv1->tv_usec - tv2->tv_usec)/1e6;
-}
-
-void vzspool(TSMS tsms, const char * uuid, const double val) {
+static void vzspool(TSMS tsms, const char * uuid, const double val) {
 	char spoolfile[256];
 	snprintf(spoolfile, sizeof(spoolfile), VZ_SPOOLFMT, conf.spool, tsms, uuid, val);
 	int fd = open(spoolfile, O_CREAT|O_EXCL|O_WRONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
@@ -361,7 +353,7 @@ void vzspool(TSMS tsms, const char * uuid, const double val) {
 	}
 }
 
-void dequeue() {
+static void dequeue() {
 	for (struct channel * ch = conf.chan; ch; ch=ch->next) {
 		struct tariff * trf  = &ch->peak;
 		if (trf->cnt > 0) {
