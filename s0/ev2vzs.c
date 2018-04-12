@@ -286,7 +286,11 @@ struct config_t * read_config(char * conffile, struct config_t * conf) {
 void update_tariff_states() {
 	uint64_t keys[bits64(KEY_CNT)];
 	memset(keys, 0, sizeof(keys));
-	ioctl(dev_fd, EVIOCGKEY(sizeof(keys)), keys);
+	int rc = ioctl(dev_fd, EVIOCGKEY(sizeof(keys)), keys);
+	if (rc < 0)
+		mylog("update_tariff_states failed, ioctl EVIOCGKEY returned %d (error %m)", rc);
+	else
+		DPRINT("ioctl EVIOCGKEY: requested %ld, got %d", sizeof(keys), rc);
 	for (struct channel *ch=conf.chan; ch; ch=ch->next)
 		if (ch->btn_trf) {
 			ch->act = bit_get(keys, ch->btn_trf->code);
@@ -323,18 +327,18 @@ void reopen_device() {
 
 	int version;
 	if (ioctl(dev_fd, EVIOCGVERSION, &version))
-		perror("evdev ioctl");
+		mylog("evdev ioctl error: %m");
 	else
 		mylog("evdev driver version is %d.%d.%d", version >> 16, (version >> 8) & 0xff, version & 0xff);
 
 	// log some device info
 	char devname[64], phys[32];
 	if (ioctl(dev_fd, EVIOCGNAME(sizeof(devname)), devname) < 0) {
-		perror("evdev ioctl EVIOCGNAME");
+		mylog("evdev ioctl EVIOCGNAME error: %m");
 		strcpy(devname, "unknown");
 	}
 	if (ioctl(dev_fd, EVIOCGPHYS(sizeof(phys)), phys) < 0) {
-		perror("event ioctl EVIOCGPHYS");
+		mylog("event ioctl EVIOCGPHYS error: %m");
 		strcpy(phys, "unknown");
 	}
 	mylog("device: %s on %s", devname, phys);
