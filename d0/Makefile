@@ -12,7 +12,7 @@ test: test.c
 d0vz: d0vz.c d0vz.h
 	date +'#define SOURCE_TS "%F %T"' -d @$$(stat -L -c %Y $<) > d0vz_ts.h
 	date +'#define COMPILE_TS "%F %T"' >> d0vz_ts.h
-	$(CC) $(CFLAGS) -L. -ld0 -lconfig -o $@ $<
+	$(CC) $(CFLAGS) -L. -ld0 -o $@ $<
 
 d0.o: d0.c d0.h
 	$(CC) $(CFLAGS) -c $<
@@ -23,7 +23,7 @@ libd0.so: d0.o
 
 .PHONY: clean install
 clean:
-	rm -f *.o *.so test
+	rm -f *.o *.so test d0vz
 
 install: libd0.so d0vz
 	install -D -p libd0.so /usr/local/lib/
