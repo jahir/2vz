@@ -1,8 +1,8 @@
-CFLAGS = -O2 -g -Wall -Werror -std=gnu99
+CFLAGS = -O0 -g -Wall -Werror -std=gnu99
 
 OBJ = log.o thz_com.o
 
-all: thz thz_errors thz_time thz2vzs 
+all: thz thz_errors thz_time thz2vzs thz_display
 
 thz: thz.o $(OBJ)
 	#$(CC) $(CFLAGS) -o $@ $<
@@ -18,6 +18,9 @@ thz2vzs: thz2vzs.c $(OBJ)
 	date +'#define SOURCE_TS "%F %T"' -d @$$(stat -L -c %Y $<) > thz2vzs_ts.h
 	date +'#define COMPILE_TS "%F %T"' >> thz2vzs_ts.h
 	gcc $(CFLAGS) -o $@ $^
+
+thz_display: thz_display.c $(OBJ)
+	gcc $(CFLAGS) -lcurl -o $@ $^
 
 %.o: %.c %.h
 	$(CC) $(CFLAGS) -c $<

@@ -231,14 +231,7 @@ int main(int argc, char * argv[])
 	/* start main task */
 	reopen_com(conf.port);
 
-	int pingrc;
-	for (int i=3; i>0; --i) {
-		pingrc = ping();
-		mylog("ping %s", pingrc ? "ok" : "failed");
-		if (pingrc)
-			break;
-	}
-	if (!pingrc) {
+	if (!ping()) {
 		mylog("no ping reply");
 		exit(1);
 	}
@@ -295,7 +288,8 @@ int main(int argc, char * argv[])
 		}
 		setproctitle("ping");
 		while (!ping()) {
-			mylog("ping failed, trying to reopen %s", conf.port);
+			mylog("ping failed, trying to reopen %s in 10s...", conf.port);
+			sleep(10);
 			reopen_com(conf.port);
 		}
 	}
