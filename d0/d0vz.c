@@ -20,6 +20,8 @@ static struct config_t conf;
 
 
 void mylog(char *fmt, ...)
+	__attribute__ ((format (printf, 1, 2)));
+void mylog(char *fmt, ...)
 {
 	va_list ap;
 	char logbuf[256];
@@ -155,7 +157,7 @@ void vzspool(unsigned long long tsms, char * uuid, char * val) {
 	snprintf(spoolfile, sizeof(spoolfile), VZ_SPOOLFMT, conf.spool, tsms, uuid, val);
 	int fd = open(spoolfile, O_CREAT|O_EXCL|O_WRONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 	if (fd < 0) {
-		mylog(NULL, "ERROR: open %s: %s", spoolfile, strerror(errno));
+		mylog("ERROR: open %s: %s", spoolfile, strerror(errno));
 	} else {
 		close(fd);
 	}
