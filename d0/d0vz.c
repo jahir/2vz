@@ -165,8 +165,10 @@ int d0read(D0 * d0) {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 	unsigned long long tsms = (unsigned long long) tv.tv_sec * 1000 + tv.tv_usec / 1000;
-	if (!d0_read(d0))
+	if (!d0_read(d0)) {
+		mylog("d0_read: %s", d0->errstr);
 		return 0;
+	}
 	DPRINT("d0_read got %d values", d0->vals);
 #ifdef DEBUG
 	d0_dump(d0);
