@@ -34,11 +34,23 @@ static int rxline(struct pollfd * fds, char * buf)
 	memset(buf, 0, BUFSIZE);
 	for (len=0; len<=BUFSIZE-2;) {
 		int rc = poll(fds, 1, D0_READ_TIMEOUT);
-		if (rc <= 0) // error or timeout
+		if (rc < 0) { // error
+			snprintf(buf, BUFSIZE, "poll error %d: %s", errno, strerror(errno));
 			return -1;
+		}
+		if (rc == 0) { // timeout
+			snprintf(buf, BUFSIZE, "poll timeout");
+			return -1;
+		}
 		ssize_t got = read(fds->fd, buf+len, 1);
-		if (got <= 0)
+		if (got < 0) { // read error
+			snprintf(buf, BUFSIZE, "read error %d: %s", errno, strerror(errno));
 			return -1;
+		}
+		if (rc == 0) { // device error?
+			snprintf(buf, BUFSIZE, "read nothing");
+			return -1;
+		}
 		len += got;
 		if (buf[len-1] == '\n' || (len > 1 && buf[0] == ETX))
 			break;
@@ -135,13 +147,16 @@ int d0_read(D0 * d0) {
 	memset(d0->id, 0, sizeof(d0->id));
 	memset(d0->serial, 0, sizeof(d0->serial));
 	memset(d0->propid, 0, sizeof(d0->propid));
-	d0->vals = 0;
-	memset(d0->val, 0, sizeof(d0->val));
 
 	txline(fds, "/?!");
-	len = rxline(fds, buf);
-	if (len <= 0 || buf[0] != '/') // /ISk5MT171-0222
+	len = rxline(fds, buf); // /ISk5MT171-0222
+	if (len <= 0 || buf[0] != '/') {
+		if (len < 0)
+			snprintf(d0->errstr, sizeof(d0->errstr), "com init: %s", buf);
+		else
+			snprintf(d0->errstr, sizeof(d0->errstr), "no or invalid response to init");
 		return 0;
+	}
 	char * end = strpbrk(buf, "\r\n");
 	if (end != NULL)
 		*end = 0;
@@ -151,11 +166,12 @@ int d0_read(D0 * d0) {
 	if (readchar(fds) != STX)
 		return 0;
 	unsigned char chks = 0, chks_got = 0; // checksum
-	for (int i=0; i<DIM(d0->val);) {
-		struct d0val * val = &(d0->val[i]);
+	for (d0->vals=0; d0->vals<DIM(d0->val);) {
 		len = rxline(fds, buf);
-		if (len < 0)
+		if (len < 0) {
+			snprintf(d0->errstr, sizeof(d0->errstr), "com err [%d]: %s", d0->vals-1, buf);
 			return 0;
+		}
 		if (len == 0)
 			continue; // emtpy line??
 		if (buf[0] == ETX) { // end of transmission
@@ -167,16 +183,18 @@ int d0_read(D0 * d0) {
 		}
 		for (int i=0; i<len; ++i)
 			chks ^= buf[i];
-		if (!d0_parse_obis(buf, val))
-			continue; // skip line
-		d0->vals = ++i;
-		if (!strcmp(val->id, "0-0:C.1.0*255"))
-			strncpy(d0->serial, val->val, sizeof(d0->serial));
-		else if (!strcmp(val->id, "1-0:0.0.0*255"))
-			strncpy(d0->propid, val->val, sizeof(d0->propid));
+		struct d0val * val = &(d0->val[d0->vals]);
+		memset(val, 0, sizeof(*val));
+		if (d0_parse_obis(buf, val)) {
+			++d0->vals;
+			if (!strcmp(val->id, "0-0:C.1.0*255"))
+				strncpy(d0->serial, val->val, sizeof(d0->serial));
+			else if (!strcmp(val->id, "1-0:0.0.0*255"))
+				strncpy(d0->propid, val->val, sizeof(d0->propid));
+		}
 	}
 	if (chks != chks_got) {
-		fprintf(stderr, "checksum mismatch: calculated %02hhx but got %02hhx\n", chks, chks_got);
+		snprintf(d0->errstr, sizeof(d0->errstr) , "checksum mismatch: calculated %02hhx but got %02hhx", chks, chks_got);
 		return 0;
 	}
 

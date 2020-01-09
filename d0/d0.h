@@ -24,6 +24,7 @@ struct d0dev {
 	char propid[16]; // 1-0:0.0.0*255(987654321)
 	int vals;
  	struct d0val val[8];
+	char errstr[BUFSIZE*2];
 };
 
 typedef struct d0dev D0;
