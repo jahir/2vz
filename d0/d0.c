@@ -176,7 +176,7 @@ int d0_read(D0 * d0) {
 			strncpy(d0->propid, val->val, sizeof(d0->propid));
 	}
 	if (chks != chks_got) {
-		fprintf(stderr, "checksum mismatch: calculated %02hhx but got %02hhx", chks, chks_got);
+		fprintf(stderr, "checksum mismatch: calculated %02hhx but got %02hhx\n", chks, chks_got);
 		return 0;
 	}
 
