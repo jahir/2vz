@@ -271,8 +271,16 @@ int main(int argc, char * argv[]) {
 		mylog("usage: %s <config>", argv[0]);
 		exit(EXIT_FAILURE);
 	}
+
+	mylog("startup. source ts %s, binary ts %s, spool dir %s)", SOURCE_TS, COMPILE_TS, conf.spool);
+
 	const char * conffile = argv[1];
 	if (!read_config(conffile, &conf)) {
+		exit(EXIT_FAILURE);
+	}
+
+	if (!conf.port) {
+		mylog("no ports to listen to, exiting...");
 		exit(EXIT_FAILURE);
 	}
 
@@ -285,8 +293,6 @@ int main(int argc, char * argv[]) {
 		sigaction(SIGINT, &action, NULL);
 		sigaction(SIGHUP, &action, NULL);
 	}
-
-	mylog("startup. source ts %s, binary ts %s, spool dir %s)", SOURCE_TS, COMPILE_TS, conf.spool);
 
 	for (struct port_t * port=conf.port; port; port=port->next) {
 		fork_reader(port);
