@@ -251,17 +251,14 @@ void wait4sigchld() {
 		mylog("waitpid error: %s", strerror(errno));
 		return;
 	}
-	struct port_t * port;
-	for (port=conf.port; port; port=port->next) { // search port of pid
-		if (port->pid == pid)
-			break;
+	for (struct port_t * port=conf.port; port; port=port->next) { // search port of pid
+		if (port->pid == pid) {
+			mylog("child pid %d (port %s) exited with status %d", pid, port->path, status);
+			fork_reader(port);
+			return;
+		}
 	}
-	if (port) {
-		mylog("child pid %d (port %s) exited with status %d", pid, port->path, status);
-	} else {
-		mylog("unknown pid %d exited with status %d", pid, status);
-	}
-	fork_reader(port);
+	mylog("unknown pid %d exited with status %d", pid, status);
 }
 
 
@@ -299,7 +296,7 @@ int main(int argc, char * argv[]) {
 	}
 
 	/* wait for a child process to end */
-	while(1) {
+	while (1) {
 		wait4sigchld();
 	}
 }
