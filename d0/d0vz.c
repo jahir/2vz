@@ -274,7 +274,7 @@ int main(int argc, char * argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-	mylog("startup. source ts %s, binary ts %s, spool dir %s)", SOURCE_TS, COMPILE_TS, conf.spool);
+	mylog("startup. source ts %s, binary ts %s, spool dir %s", SOURCE_TS, COMPILE_TS, conf.spool);
 
 	if (!conf.port) {
 		mylog("no ports to listen to, exiting...");
