@@ -17,6 +17,7 @@ thz_time: thz_time.c $(OBJ)
 thz2vzs: thz2vzs.c $(OBJ)
 	date +'#define SOURCE_TS "%F %T"' -d @$$(stat -L -c %Y $<) > thz2vzs_ts.h
 	date +'#define COMPILE_TS "%F %T"' >> thz2vzs_ts.h
+	git log -1 --format='#define COMMIT_HASH "%h"' >> thz2vzs_ts.h
 	gcc $(CFLAGS) -o $@ $^
 
 %.o: %.c %.h

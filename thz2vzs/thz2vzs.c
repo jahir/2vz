@@ -216,7 +216,7 @@ int main(int argc, char * argv[])
 	if (conf.log)
 		mylog_logpath(conf.log);
 	mylog("%s %s (using spool dir %s)", PROG, VER, conf.spool);
-	mylog("source ts: %s  compile ts: %s", SOURCE_TS, COMPILE_TS);
+	mylog("source ts: %s  compile ts: %s  commit: %s", SOURCE_TS, COMPILE_TS, COMMIT_HASH);
 
 	{ // install signal handlers
 		struct sigaction action;
